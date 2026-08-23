@@ -91,3 +91,53 @@ app/debug.tsx                 Stage 0 유일 UI. 테스트 버튼 + 권한 조�
   (importance MIN 검토 또는 앵커 알림 즉시 cancel 타이밍 개선).
 - RN dev 메뉴(Inspect/Touchables)가 알람 화면 터치를 가로챌 수 있음 — 테스트는 release 빌드로.
 - 첫 알람 발화가 수 초 지연될 수 있음 (콜드 웜업). 이후 발화는 즉시. Doze 실증 때 재측정.
+
+---
+
+## Stage 1 — 데이터 계층
+
+### 구조
+
+```
+supabase/migrations/
+  0001_init.sql        전 테이블(9) + 인덱스(7) + moddatetime 트리거 + §7.2 CHECK 제약
+  0002_rls.sql         전 테이블 RLS. 자식(reminders/event_overrides)은 부모 events EXISTS
+  0003_seed.sql        auth.users INSERT 트리거(handle_new_user) — 카테고리4/교시7/설정1 자동 시딩
+src/domain/            (순수 TS — RN·Supabase·TanStack import 린트로 금지)
+  types.ts             도메인 타입 (camelCase, ChronaEvent 등)
+  time.ts              DateOnly 브랜디드 타입 + 시각 유틸. 모든 시각 포맷의 유일한 통로
+  time.test.ts         Seoul/UTC/NY 3개 시간대 하루밀림·DST 검증 14케이스
+src/data/
+  supabase.ts          유일한 클라이언트. .env → app.config extra 주입. AppState 기반 토큰 갱신
+  database.types.ts    DB 타입 (수기 — 클라우드 information_schema와 대조 완료)
+  mappers.ts           Row ↔ 도메인 유일 변환 지점. §7.2 위반 시 throw. 테스트 11케이스
+  keys.ts / query.tsx  쿼리 키 팩토리, QueryClient + AsyncStorage persister (24h)
+  net.ts               NetInfo → Zustand + TanStack onlineManager. assertOnline() 쓰기 가드
+  auth.ts              매직링크 + chrona://auth-callback 딥링크 세션 + useSession
+  hooks/               events CRUD(낙관적 업데이트+롤백, soft delete), categories, settings
+app/auth.tsx           로그인. app/auth-callback.tsx 복귀 라우트 (없으면 Unmatched Route)
+```
+
+### 핵심 결정
+
+- **§7.2 3중 방어**: DB CHECK 제약(종일↔시각 형태 강제) + mappers throw + DateOnly 브랜드 타입.
+  종일 일정은 DB('date')→도메인(string)→UI까지 Date 객체로 변환되지 않는다.
+- **시딩은 SQL 파일이 아니라 auth 트리거**: user_id가 가입 전 존재하지 않으므로.
+  DB를 리셋해도 다음 가입 때 자동 재시딩.
+- **타입 2층**: database.types.ts는 src/data/ 밖 반출 금지. 웹(Stage 10)은 domain만 재사용.
+- **오프라인**: 읽기 = persist 캐시, 쓰기 = assertOnline 차단+토스트. 쓰기 큐 없음 (1인 1기기).
+- **라우트 가드 예외**: /alarm-ring은 세션 없이 접근 가능해야 함 (§3.5 payload 자립).
+
+### 함정 / 노하우 (실검증에서 발견)
+
+- **Supabase 직접 연결(db.*.supabase.co:5432)은 IPv6 전용** — IPv4 네트워크에선
+  세션 풀러 `aws-0-ap-northeast-2.pooler.supabase.com:5432` + 유저 `postgres.<ref>` 사용.
+- **무료 티어 매직링크 메일 = 시간당 2통.** 개발 중엔 `scripts/dev-login.sh`(gitignore, service_role 포함)로
+  admin generate_link → verify → adb 딥링크 주입. **주의: adb shell에 `#` 포함 URL 전달 시
+  기기 셸이 주석 처리 — 원격 명령 전체를 따옴표로 감쌀 것.**
+- **매직링크 복귀 라우트(app/auth-callback.tsx) 필수** — 없으면 expo-router Unmatched Route.
+- **TanStack onlineManager는 RN에서 수동 연결** — NetInfo 리스너에서 setOnline. 안 하면
+  오프라인 복귀 후 refetch가 안 일어남.
+- supabase gen types는 Docker 또는 access token 필요 → 수기 타입 유지 중.
+  스키마 변경 시 information_schema 쿼리로 대조 (또는 `supabase login` 후 pnpm types).
+- expo-constants extra는 빌드 시점에 .env를 굽는다 — **.env 변경 시 APK 재빌드 필요.**
