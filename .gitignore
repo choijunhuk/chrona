@@ -56,3 +56,4 @@ ios/
 
 # secrets in local verify script
 scripts/verify-schema-reproducibility.sh
+scripts/dev-login.sh

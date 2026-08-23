@@ -6,9 +6,11 @@ import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { signOut } from '@/data/auth';
+import { useEvents } from '@/data/hooks/events';
+import { useCategories, useSettings } from '@/data/hooks/settings';
 import type { EventDraft, EventRow } from '@/data/mappers';
 import { toEventInsert } from '@/data/mappers';
-import { useNetStore } from '@/data/net';
+import { assertOnline, useNetStore } from '@/data/net';
 import { queryClient } from '@/data/query';
 import { supabase } from '@/data/supabase';
 import type { AlarmPayload } from '@/domain/alarm-payload';
@@ -113,9 +115,10 @@ const actions = {
 
   // ── Stage 1: 데이터 계층 검증 ──────────────────────────
   seedTestEvents: async () => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return '로그인 필요';
-    const userId = userData.user.id;
+    assertOnline();
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) return '로그인 필요';
+    const userId = sessionData.session.user.id;
     const base = new Date();
     const drafts: EventDraft[] = [];
     for (let i = 0; i < 7; i++) {
@@ -196,6 +199,7 @@ const actions = {
   },
 
   softDeleteLatest: async () => {
+    assertOnline();
     const { data, error } = await supabase
       .from('events')
       .select('id,title')
@@ -256,6 +260,29 @@ const actions = {
   },
 } as const;
 
+// 훅 마운트 → TanStack 캐시 적재 → AsyncStorage persist → 오프라인 읽기 검증 가능 (stage-1 검증 6)
+const EVENT_RANGE = {
+  from: new Date(Date.now() - 7 * 86400_000),
+  to: new Date(Date.now() + 30 * 86400_000),
+  tz: 'Asia/Seoul',
+};
+
+function DataStatus() {
+  const events = useEvents(EVENT_RANGE);
+  const categories = useCategories();
+  const settings = useSettings();
+  // 캐시 데이터가 있으면 상태보다 데이터 우선 표시 (오프라인 refetch 실패 시에도 캐시는 유효)
+  const label = (s: { status: string }, n: number | undefined) =>
+    n !== undefined ? `${n}건${s.status === 'error' ? '(캐시)' : ''}` : s.status;
+  return (
+    <Text style={styles.dataStatus}>
+      TanStack: 일정 {label(events, events.data?.length)} · 카테고리{' '}
+      {label(categories, categories.data?.length)} · 설정 {settings.status}
+      {events.isFetching || categories.isFetching ? ' (fetching…)' : ''}
+    </Text>
+  );
+}
+
 export default function Debug() {
   const [log, setLog] = useState<string[]>([]);
   const append = useCallback((line: string) => {
@@ -285,6 +312,7 @@ export default function Debug() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.heading}>Chrona /debug</Text>
+      <DataStatus />
 
       <Btn label="10초 뒤 알람 테스트 (② 알람 모드)" onPress={testAlarm} accent />
       <View style={styles.row}>
@@ -378,4 +406,5 @@ const styles = StyleSheet.create({
   btnPressed: { opacity: 0.6 },
   btnText: { color: '#EDEFF5', fontSize: 15 },
   log: { color: '#9BA1B0', fontSize: 12, fontFamily: 'monospace' },
+  dataStatus: { color: '#5BD8A6', fontSize: 13 },
 });

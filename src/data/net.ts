@@ -3,6 +3,7 @@
  * 읽기: persist 캐시로 오프라인 동작. 쓰기: 오프라인이면 차단 + 안내.
  */
 import NetInfo from '@react-native-community/netinfo';
+import { onlineManager } from '@tanstack/react-query';
 import { ToastAndroid } from 'react-native';
 import { create } from 'zustand';
 
@@ -14,10 +15,12 @@ export const useNetStore = create<NetState>(() => ({
   isOnline: true,
 }));
 
-/** 앱 루트에서 1회 호출 */
+/** 앱 루트에서 1회 호출. TanStack onlineManager도 여기서 연결 (재연결 시 자동 refetch) */
 export function initNetListener(): () => void {
   return NetInfo.addEventListener((state) => {
-    useNetStore.setState({ isOnline: !!state.isConnected });
+    const online = !!state.isConnected;
+    useNetStore.setState({ isOnline: online });
+    onlineManager.setOnline(online);
   });
 }
 
