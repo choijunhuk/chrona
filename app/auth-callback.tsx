@@ -6,16 +6,17 @@ import { Redirect } from 'expo-router';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { useSession } from '@/data/auth';
+import { colors } from '@/ui/tokens';
 
 export default function AuthCallback() {
   const { session, loading } = useSession();
 
-  if (!loading && session) return <Redirect href="/debug" />;
+  if (!loading && session) return <Redirect href="/(tabs)/calendar" />;
   if (!loading && !session) return <Redirect href="/auth" />;
 
   return (
     <View style={styles.container}>
-      <ActivityIndicator color="#6C7BFF" size="large" />
+      <ActivityIndicator color={colors.accent} size="large" />
     </View>
   );
 }
@@ -23,7 +24,7 @@ export default function AuthCallback() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0E0F13',
+    backgroundColor: colors.bg,
     alignItems: 'center',
     justifyContent: 'center',
   },

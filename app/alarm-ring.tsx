@@ -21,6 +21,7 @@ import Animated, {
 
 import { parseAlarmPayload } from '@/domain/alarm-payload';
 import { dismissAlarm, snoozeAlarm } from '@/native/alarm';
+import { colors } from '@/ui/tokens';
 
 const TRACK_WIDTH = 300;
 const THUMB_SIZE = 64;
@@ -131,43 +132,43 @@ export default function AlarmRing() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000000' },
+  container: { flex: 1, backgroundColor: colors.black },
   accent: { height: 4, width: '100%' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  time: { color: '#FFFFFF', fontSize: 72, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  title: { color: '#FFFFFF', fontSize: 24, fontWeight: '500' },
-  snoozeInfo: { color: '#9BA1B0', fontSize: 15 },
+  time: { color: colors.white, fontSize: 72, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  title: { color: colors.white, fontSize: 24, fontWeight: '500' },
+  snoozeInfo: { color: colors.textSub, fontSize: 15 },
   controls: { alignItems: 'center', gap: 24, paddingBottom: 64 },
   snoozeButton: {
     paddingHorizontal: 32,
     paddingVertical: 16,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#444444',
+    borderColor: colors.border,
   },
   disabled: { opacity: 0.35 },
-  snoozeText: { color: '#FFFFFF', fontSize: 17 },
+  snoozeText: { color: colors.white, fontSize: 17 },
   track: {
     width: TRACK_WIDTH,
     height: THUMB_SIZE + 8,
     borderRadius: 999,
-    backgroundColor: '#1A1A1A',
+    backgroundColor: colors.surface,
     justifyContent: 'center',
     paddingHorizontal: 4,
   },
   trackLabel: {
     position: 'absolute',
     alignSelf: 'center',
-    color: '#5E6473',
+    color: colors.textDim,
     fontSize: 15,
   },
   thumb: {
     width: THUMB_SIZE,
     height: THUMB_SIZE,
     borderRadius: 999,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  thumbText: { color: '#000000', fontSize: 20, fontWeight: '700' },
+  thumbText: { color: colors.black, fontSize: 20, fontWeight: '700' },
 });
