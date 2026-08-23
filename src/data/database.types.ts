@@ -1,8 +1,9 @@
 /**
  * DB 타입 — supabase gen types 형식.
  *
- * ⚠ 현재는 마이그레이션 기준 수기 작성본. 프로젝트 link 후 `pnpm types`로
- * 재생성해서 교체하고, diff가 있으면 마이그레이션과 대조할 것.
+ * 수기 작성본 — 2026-08-23 클라우드 스키마(information_schema)와 전 컬럼·nullability
+ * 대조 완료. `pnpm types`(supabase gen, Docker 또는 supabase login 필요)로 재생성 가능하며
+ * 스키마 변경 시 반드시 재생성·대조할 것.
  * 이 파일은 src/data/ 밖에서 import 금지 (stage-1 §1-5).
  */
 

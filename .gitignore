@@ -53,3 +53,6 @@ ios/
 .env
 .env.*
 !.env.example
+
+# secrets in local verify script
+scripts/verify-schema-reproducibility.sh
