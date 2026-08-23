@@ -16,7 +16,7 @@ module.exports = defineConfig([
         {
           patterns: [
             {
-              group: ['react-native', 'react-native/*', 'react-native-*', 'expo', 'expo-*', '@expo/*', '@notifee/*', '@react-native-async-storage/*'],
+              group: ['react-native', 'react-native/*', 'react-native-*', 'expo', 'expo-*', '@expo/*', '@notifee/*', '@react-native-async-storage/*', '@supabase/*', '@tanstack/*', 'zustand', 'zustand/*'],
               message: 'src/domain/ must not depend on React Native or Expo (master spec §2).',
             },
           ],

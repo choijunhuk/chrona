@@ -48,3 +48,12 @@ example
 # native prebuild output (CNG)
 android/
 ios/
+
+# env
+.env
+.env.*
+!.env.example
+
+# secrets in local verify script
+scripts/verify-schema-reproducibility.sh
+scripts/dev-login.sh
