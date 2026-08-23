@@ -30,7 +30,7 @@
 ## Stage 1 — 데이터 계층 (Supabase 스키마 + Auth + events CRUD)
 
 - 완료일: 2026-08-24
-- 브랜치 / 머지 커밋: `stage-1-data` / (머지 대기)
+- 브랜치 / 머지 커밋: `stage-1-data` / `84f2797`
 - 구현 요약: 마이그레이션 3개로 전체 스키마(9테이블+RLS+시딩 트리거), 도메인 타입/time.ts(DateOnly), mappers, TanStack Query+persist, 낙관적 CRUD 훅, netinfo 오프라인 정책, 매직링크 인증+딥링크+라우트 가드, debug 데이터 검증 섹션
 - DoD 충족: 7/7 — 재현성(드랍 후 재적용 확인), RLS 켠 채 동작, domain 순수성 린트, mappers 테스트 11, time 테스트 14(3TZ), 검증 9개, ARCHITECTURE 기록
 - 실기기 검증 결과: 9/9 통과 (SM-S928N). 핵심인 5번(뉴욕 시간대에서 종일 일정 날짜 불변) 통과
