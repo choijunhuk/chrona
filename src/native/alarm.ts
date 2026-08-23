@@ -172,10 +172,16 @@ export async function listScheduled(): Promise<ScheduledAlarm[]> {
 
 /** 해제: 소리 정지 + 포그라운드 서비스 즉시 종료 + 알림 제거 (Stage 0 §1-6) */
 export async function dismissAlarm(notificationId: string): Promise<void> {
+  console.log('[chrona] dismissAlarm id=', JSON.stringify(notificationId));
   await notifee.stopForegroundService();
   if (notificationId) {
     await notifee.cancelNotification(notificationId);
   }
+  const remaining = await notifee.getDisplayedNotifications();
+  console.log(
+    '[chrona] after dismiss, displayed=',
+    remaining.map((n) => `${n.id}/${n.notification.android?.channelId}`)
+  );
 }
 
 /**
@@ -264,6 +270,12 @@ async function handleAnchorFired(notificationId: string | undefined): Promise<vo
 /** 알람 충돌 정책(§3.9): 새 알람 도착 시 이전에 표시 중인 알람을 전부 dismiss */
 async function overrideOlderAlarms(newId: string | undefined): Promise<void> {
   const displayed = await notifee.getDisplayedNotifications();
+  console.log(
+    '[chrona] overrideOlderAlarms newId=',
+    newId,
+    'displayed=',
+    displayed.map((n) => `${n.id}/${n.notification.android?.channelId}`)
+  );
   const olderAlarms = displayed.filter(
     (n) => n.notification.android?.channelId === CHANNELS.alarm && n.id !== newId
   );

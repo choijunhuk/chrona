@@ -37,14 +37,18 @@ function testPayload(fireAt: Date, title: string): AlarmPayload {
 }
 
 // 액션 본체는 렌더 밖(모듈 레벨) — react-hooks/purity 대상에서 제외되고, 실제로도 렌더와 무관하다
+async function scheduleTestAlarm(afterMs: number, label: string) {
+  const fireAt = new Date(Date.now() + afterMs);
+  const payload = testPayload(fireAt, '테스트 알람');
+  const id = await scheduleAlarm(payload, fireAt);
+  await rememberScheduled(id, fireAt, payload);
+  return `② 알람 예약됨 → ${formatTimeLabel(fireAt)} (${label} 뒤)`;
+}
+
 const actions = {
-  testAlarm: async () => {
-    const fireAt = new Date(Date.now() + 10_000);
-    const payload = testPayload(fireAt, '테스트 알람');
-    const id = await scheduleAlarm(payload, fireAt);
-    await rememberScheduled(id, fireAt, payload);
-    return `② 알람 예약됨 → ${formatTimeLabel(fireAt)} (10초 뒤)`;
-  },
+  testAlarm: () => scheduleTestAlarm(10_000, '10초'),
+  testAlarm3m: () => scheduleTestAlarm(3 * 60_000, '3분'), // 재부팅 복구 검증용
+  testAlarm65m: () => scheduleTestAlarm(65 * 60_000, '65분'), // Doze 관통 검증용
   testReminder: async () => {
     const fireAt = new Date(Date.now() + 10_000);
     await scheduleReminder(testPayload(fireAt, '테스트 리마인더'), fireAt);
@@ -118,6 +122,8 @@ export default function Debug() {
   );
 
   const testAlarm = run(actions.testAlarm);
+  const testAlarm3m = run(actions.testAlarm3m);
+  const testAlarm65m = run(actions.testAlarm65m);
   const testReminder = run(actions.testReminder);
   const ongoingOn = run(actions.ongoingOn);
   const ongoingOff = run(actions.ongoingOff);
@@ -131,6 +137,10 @@ export default function Debug() {
       <Text style={styles.heading}>Chrona /debug</Text>
 
       <Btn label="10초 뒤 알람 테스트 (② 알람 모드)" onPress={testAlarm} accent />
+      <View style={styles.row}>
+        <Btn label="3분 뒤 알람 (재부팅 검증)" onPress={testAlarm3m} half />
+        <Btn label="65분 뒤 알람 (Doze 검증)" onPress={testAlarm65m} half />
+      </View>
       <Btn label="10초 뒤 리마인더 테스트 (① 조용한 알림)" onPress={testReminder} />
       <View style={styles.row}>
         <Btn label="상시 알림 표시 (③)" onPress={ongoingOn} half />
