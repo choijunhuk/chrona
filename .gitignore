@@ -48,3 +48,8 @@ example
 # native prebuild output (CNG)
 android/
 ios/
+
+# env
+.env
+.env.*
+!.env.example

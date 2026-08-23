@@ -31,6 +31,11 @@ const config: ExpoConfig = {
       },
     ],
   ],
+  extra: {
+    // .env에서 주입 (stage-1 §1-1). 하드코딩 금지.
+    supabaseUrl: process.env.SUPABASE_URL,
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
+  },
   experiments: {
     typedRoutes: true,
   },
