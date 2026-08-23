@@ -1,0 +1,8 @@
+.omc/
+node_modules/
+.expo/
+android/
+ios/
+dist/
+*.log
+.DS_Store
