@@ -1,11 +1,13 @@
 import { View, type ViewProps } from 'react-native';
 
-import { colors, radius, spacing } from '@/ui/tokens';
+import { useTheme } from '@/ui/theme';
+import { radius, spacing } from '@/ui/tokens';
 
 type Props = ViewProps & { alt?: boolean; padded?: boolean };
 
 /** 카드 컨테이너 */
 export function Surface({ alt, padded = true, style, ...rest }: Props) {
+  const { colors } = useTheme();
   return (
     <View
       {...rest}

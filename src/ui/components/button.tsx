@@ -1,7 +1,8 @@
 import { ActivityIndicator, Pressable, type ViewStyle } from 'react-native';
 
 import { AppText } from '@/ui/components/text';
-import { colors, radius, spacing } from '@/ui/tokens';
+import { useTheme } from '@/ui/theme';
+import { radius, spacing } from '@/ui/tokens';
 
 type Variant = 'primary' | 'ghost' | 'danger';
 
@@ -14,21 +15,18 @@ type Props = {
   style?: ViewStyle;
 };
 
-const bg: Record<Variant, string> = {
-  primary: colors.accent,
-  ghost: colors.surface,
-  danger: colors.danger,
-};
-
 export function Button({ label, onPress, variant = 'primary', disabled, loading, style }: Props) {
+  const { colors } = useTheme();
+  const bg = { primary: colors.accent, ghost: colors.surface, danger: colors.danger }[variant];
+  const labelColor = variant === 'ghost' ? 'text' : 'white';
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
       style={({ pressed }) => [
         {
-          backgroundColor: bg[variant],
-          borderColor: variant === 'ghost' ? colors.border : bg[variant],
+          backgroundColor: bg,
+          borderColor: variant === 'ghost' ? colors.border : bg,
           borderWidth: 1,
           borderRadius: radius.md,
           paddingVertical: spacing.lg - 2,
@@ -40,9 +38,11 @@ export function Button({ label, onPress, variant = 'primary', disabled, loading,
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={colors.text} />
+        <ActivityIndicator color={colors.white} />
       ) : (
-        <AppText style={{ fontWeight: '600' }}>{label}</AppText>
+        <AppText color={labelColor} style={{ fontWeight: '600' }}>
+          {label}
+        </AppText>
       )}
     </Pressable>
   );

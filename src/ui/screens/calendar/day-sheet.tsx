@@ -12,7 +12,8 @@ import { formatTimeLabel, type DateOnly, toDateOnly } from '@/domain/time';
 import { ColorDot } from '@/ui/components/color-dot';
 import { Skeleton } from '@/ui/components/skeleton';
 import { AppText } from '@/ui/components/text';
-import { colors, radius, spacing } from '@/ui/tokens';
+import { useTheme } from '@/ui/theme';
+import { darkColors, radius, spacing, type ThemeColors } from '@/ui/tokens';
 
 import { TimelineDay } from './timeline-day';
 
@@ -27,11 +28,13 @@ type Props = {
 };
 
 export function eventColor(e: ChronaEvent, categories: Category[]): string {
-  return e.color ?? categories.find((c) => c.id === e.categoryId)?.color ?? colors.accent;
+  return e.color ?? categories.find((c) => c.id === e.categoryId)?.color ?? darkColors.accent;
 }
 
 export function DaySheet({ date, events, categories, loading, tz, onPressEvent, onPressAdd }: Props) {
   const sheetRef = useRef<BottomSheet>(null);
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [snapIndex, setSnapIndex] = useState(0);
   const snapPoints = useMemo(() => ['14%', '45%', '90%'], []);
 
@@ -41,8 +44,11 @@ export function DaySheet({ date, events, categories, loading, tz, onPressEvent, 
     for (const e of events) {
       if (e.allDay && e.startDate) {
         if (e.startDate <= date && date <= (e.endDate ?? e.startDate)) allDay.push(e);
-      } else if (e.startsAt && toDateOnly(e.startsAt, tz) === date) {
-        timed.push(e);
+      } else if (e.startsAt) {
+        // 자정을 넘는 일정: 걸치는 모든 날에 표시 (사용자 요청)
+        const spanStart = toDateOnly(e.startsAt, tz);
+        const spanEnd = toDateOnly(e.endsAt ?? e.startsAt, tz);
+        if (spanStart <= date && date <= spanEnd) timed.push(e);
       } else if (e.kind === 'task' && e.dueAt && toDateOnly(e.dueAt, tz) === date) {
         timed.push(e);
       }
@@ -74,7 +80,7 @@ export function DaySheet({ date, events, categories, loading, tz, onPressEvent, 
         </Animated.View>
       );
     },
-    [categories, onPressEvent, tz]
+    [categories, onPressEvent, tz, styles]
   );
 
   return (
@@ -144,7 +150,7 @@ export function DaySheet({ date, events, categories, loading, tz, onPressEvent, 
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   sheetBg: { backgroundColor: colors.surface, borderRadius: radius.lg },
   handle: { backgroundColor: colors.border },
   sheetHeader: {

@@ -12,7 +12,7 @@ import { QueryProvider } from '@/data/query';
 import { serializeAlarmPayload } from '@/domain/alarm-payload';
 import { ensureChannels, getInitialAlarm, subscribeAlarmDelivered } from '@/native/alarm';
 import { restoreMissingAlarms } from '@/native/alarm-store';
-import { colors } from '@/ui/tokens';
+import { useTheme } from '@/ui/theme';
 
 // 스플래시는 폰트 로딩까지 유지 (stage-2 §1-2)
 void SplashScreen.preventAutoHideAsync();
@@ -38,6 +38,7 @@ function useAuthGuard() {
 function Root() {
   const router = useRouter();
   const url = Linking.useURL();
+  const { colors } = useTheme();
   useAuthGuard();
 
   // 매직링크 딥링크 → 세션 확립

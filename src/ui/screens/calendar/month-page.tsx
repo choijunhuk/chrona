@@ -12,7 +12,8 @@ import { dayOfMonth } from '@/domain/calendar';
 import type { DateOnly } from '@/domain/time';
 import { AppText } from '@/ui/components/text';
 import { ColorDot } from '@/ui/components/color-dot';
-import { colors, radius, spacing } from '@/ui/tokens';
+import { useTheme } from '@/ui/theme';
+import { radius, spacing } from '@/ui/tokens';
 
 import { CELL_HEIGHT } from './constants';
 
@@ -50,6 +51,8 @@ const WeekRow = memo(function WeekRow({
     };
   });
 
+  const { colors } = useTheme();
+
   return (
     <Animated.View style={[styles.row, animStyle]}>
       {week.map((cell) => {
@@ -61,14 +64,14 @@ const WeekRow = memo(function WeekRow({
             <View
               style={[
                 styles.dayCircle,
-                isToday && styles.todayRing,
-                isSelected && styles.selectedFill,
+                isToday && { borderWidth: 1.5, borderColor: colors.accent },
+                isSelected && { backgroundColor: colors.accent },
               ]}
             >
               <AppText
                 variant="caption"
                 nums
-                color={cell.inMonth ? (isSelected ? 'bg' : 'text') : 'textDim'}
+                color={isSelected ? 'white' : cell.inMonth ? 'text' : 'textDim'}
                 style={styles.dayNum}
               >
                 {dayOfMonth(cell.date)}
@@ -122,8 +125,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  todayRing: { borderWidth: 1.5, borderColor: colors.accent },
-  selectedFill: { backgroundColor: colors.accent },
   dayNum: { lineHeight: 18 },
   dotsRow: { flexDirection: 'row', gap: 3, marginTop: 2, alignItems: 'center', height: 10 },
 });

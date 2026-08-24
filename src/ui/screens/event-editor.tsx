@@ -4,7 +4,7 @@
  */
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -16,7 +16,8 @@ import { Button } from '@/ui/components/button';
 import { ColorDot } from '@/ui/components/color-dot';
 import { haptics } from '@/ui/components/haptics';
 import { AppText } from '@/ui/components/text';
-import { colors, palette, radius, spacing } from '@/ui/tokens';
+import { useTheme } from '@/ui/theme';
+import { palette, radius, spacing, type ThemeColors } from '@/ui/tokens';
 
 const TZ = 'Asia/Seoul';
 
@@ -35,6 +36,8 @@ type FormInitial = {
 
 /** 라우트 래퍼: 데이터 준비 후 폼을 초기값과 함께 마운트 (effect 내 setState 회피) */
 export function EventEditor() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const params = useLocalSearchParams<{ id: string; date?: string }>();
   const isNew = params.id === 'new';
   const existing = useEvent(isNew ? '' : params.id);
@@ -80,6 +83,8 @@ export function EventEditor() {
 }
 
 function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial: FormInitial }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -286,7 +291,7 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { padding: spacing.lg, gap: spacing.lg, paddingBottom: spacing.x40 },
   input: {

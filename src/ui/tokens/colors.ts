@@ -1,5 +1,5 @@
-// master §5.2 — 다크 퍼스트. 라이트 테마는 Stage 8.
-export const colors = {
+// master §5.2 다크 + 라이트 변형 (사용자 요청으로 Stage 2에서 당겨옴)
+export const darkColors = {
   bg: '#0E0F13',
   surface: '#17191F',
   surfaceAlt: '#1E2129',
@@ -14,7 +14,30 @@ export const colors = {
   white: '#FFFFFF',
 } as const;
 
-// 일정 색상 팔레트 8종 — 채도 낮게, 형광색 금지
+export type ThemeColors = { [K in keyof typeof darkColors]: string };
+
+export const lightColors: ThemeColors = {
+  bg: '#F5F6FA',
+  surface: '#FFFFFF',
+  surfaceAlt: '#ECEEF4',
+  border: '#D8DBE4',
+  text: '#1A1C22',
+  textSub: '#5A6070',
+  textDim: '#9BA1B0',
+  accent: '#5B6AE8',
+  danger: '#E05252',
+  success: '#2FA97C',
+  black: '#000000',
+  white: '#FFFFFF',
+};
+
+/**
+ * 정적 다크 팔레트 — 테마와 무관하게 어두워야 하는 곳 전용
+ * (알람 화면: 한밤중 발화, debug 화면). 일반 UI는 useTheme()를 쓴다.
+ */
+export const colors = darkColors;
+
+// 일정 색상 팔레트 8종 — 채도 낮게, 형광색 금지. 양 테마 공용.
 export const palette = [
   '#6C7BFF',
   '#8B7BD8',
@@ -26,4 +49,4 @@ export const palette = [
   '#8A93A8',
 ] as const;
 
-export type ColorToken = keyof typeof colors;
+export type ColorToken = keyof typeof darkColors;

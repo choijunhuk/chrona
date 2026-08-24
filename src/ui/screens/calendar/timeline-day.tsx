@@ -9,7 +9,8 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import type { Category, ChronaEvent } from '@/domain/types';
 import { formatTimeLabel, toDateOnly, type DateOnly } from '@/domain/time';
 import { AppText } from '@/ui/components/text';
-import { colors, radius, spacing } from '@/ui/tokens';
+import { useTheme } from '@/ui/theme';
+import { radius, spacing, type ThemeColors } from '@/ui/tokens';
 
 import { eventColor } from './day-sheet';
 
@@ -83,6 +84,8 @@ type Props = {
 
 export function TimelineDay({ date, events, allDayEvents, categories, tz, onPressEvent }: Props) {
   const scrollRef = useRef<ScrollView>(null);
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const blocks = useMemo(() => layoutBlocks(events, tz, date), [events, tz, date]);
 
   const isToday = toDateOnly(new Date(), tz) === date;
@@ -161,7 +164,7 @@ export function TimelineDay({ date, events, allDayEvents, categories, tz, onPres
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   content: { paddingBottom: spacing.x40, paddingLeft: 0 },
   allDayRow: {
     flexDirection: 'row',

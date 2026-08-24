@@ -1,8 +1,8 @@
 /**
  * 캘린더 화면 (stage-2 §1-4·1-5).
  * - progress(0=월, 1=주) 하나로 접기 전환 전부 구동 — 전 과정 UI 스레드
- * - 드래그 중 runOnJS 0회. 스냅 완료 콜백에서 모드 동기화 1회만
- * - 좌우 스와이프: 3페이지 캐러셀 (prev/current/next 미리 렌더)
+ * - 단일 Pan + 축 잠금: 시작 방향으로 세로(접기)/가로(페이징) 결정. Race 조합의 모호성 제거
+ * - 드래그 중 runOnJS 0회. 스냅 완료 콜백에서 상태 동기화 1회만
  */
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
@@ -31,7 +31,8 @@ import {
 import { fromDateOnly, toDateOnly, todayDateOnly, type DateOnly } from '@/domain/time';
 import { haptics } from '@/ui/components/haptics';
 import { AppText } from '@/ui/components/text';
-import { colors, spacing, spring } from '@/ui/tokens';
+import { useTheme } from '@/ui/theme';
+import { spacing, spring, type ThemeColors } from '@/ui/tokens';
 
 import { COLLAPSE_DISTANCE, CELL_HEIGHT, MONTH_HEIGHT } from './constants';
 import { DaySheet } from './day-sheet';
@@ -43,19 +44,26 @@ export function CalendarScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const today = todayDateOnly(TZ);
 
-  const [mode, setMode] = useState<'month' | 'week'>('month'); // 스냅 후 동기화 전용
+  const [mode, setMode] = useState<'month' | 'week'>('month');
   const [center, setCenter] = useState(() => monthOf(today));
   const [selectedDate, setSelectedDate] = useState<DateOnly>(today);
 
   const centerGrid = useMemo(() => monthGrid(center.year, center.month), [center]);
   const prevMonth = addMonths(center.year, center.month, -1);
   const nextMonth = addMonths(center.year, center.month, 1);
-  const prevGrid = useMemo(() => monthGrid(prevMonth.year, prevMonth.month), [prevMonth.year, prevMonth.month]);
-  const nextGrid = useMemo(() => monthGrid(nextMonth.year, nextMonth.month), [nextMonth.year, nextMonth.month]);
+  const prevGrid = useMemo(
+    () => monthGrid(prevMonth.year, prevMonth.month),
+    [prevMonth.year, prevMonth.month]
+  );
+  const nextGrid = useMemo(
+    () => monthGrid(nextMonth.year, nextMonth.month),
+    [nextMonth.year, nextMonth.month]
+  );
 
-  // 주간 모드 사이드 페이지 (1행 스트립)
   const prevWeekGrid = useMemo<MonthGridCell[][]>(
     () => [weekOf(addDaysOnly(selectedDate, -7)).map((d) => ({ date: d, inMonth: true }))],
     [selectedDate]
@@ -78,37 +86,43 @@ export function CalendarScreen() {
     const catColor = new Map((categories ?? []).map((c) => [c.id, c.color]));
     const map: DayDots = {};
     const push = (d: string, color: string) => (map[d] = [...(map[d] ?? []), color]);
+    const pushSpan = (from: DateOnly, to: DateOnly, color: string) => {
+      let d = from;
+      for (let i = 0; i < 60 && d <= to; i++) {
+        push(d, color);
+        d = addDaysOnly(d, 1);
+      }
+    };
     for (const e of events ?? []) {
-      const color = e.color ?? (e.categoryId ? (catColor.get(e.categoryId) ?? colors.accent) : colors.accent);
+      const color =
+        e.color ?? (e.categoryId ? (catColor.get(e.categoryId) ?? colors.accent) : colors.accent);
       if (e.allDay && e.startDate) {
-        let d = e.startDate;
-        for (let i = 0; i < 60 && d <= (e.endDate ?? e.startDate); i++) {
-          push(d, color);
-          d = addDaysOnly(d, 1);
-        }
+        pushSpan(e.startDate, e.endDate ?? e.startDate, color);
       } else if (e.startsAt) {
-        push(toDateOnly(e.startsAt, TZ), color);
+        // 자정을 넘는 일정은 걸치는 모든 날에 점 표시 (사용자 요청: 이어지는 일정)
+        pushSpan(toDateOnly(e.startsAt, TZ), toDateOnly(e.endsAt ?? e.startsAt, TZ), color);
       } else if (e.dueAt) {
         push(toDateOnly(e.dueAt, TZ), color);
       }
     }
     return map;
-  }, [events, categories]);
+  }, [events, categories, colors.accent]);
 
   // ── 애니메이션 상태 ──────────────────────────────────
   const progress = useSharedValue(0);
   const startProgress = useSharedValue(0);
   const selectedWeekIndex = useSharedValue(0);
-  const sideWeekIndex = useSharedValue(0); // 사이드 페이지용 고정 0
+  const sideWeekIndex = useSharedValue(0);
   const dragX = useSharedValue(0);
+  const axis = useSharedValue<0 | 1 | 2>(0); // 0 미정 / 1 세로(접기) / 2 가로(페이징)
 
   useEffect(() => {
     const idx = weekIndexOf(centerGrid, selectedDate);
     selectedWeekIndex.value = idx >= 0 ? idx : 0;
   }, [centerGrid, selectedDate, selectedWeekIndex]);
 
-  // ── 페이지 이동 (스냅 완료 후 1회 호출) ──────────────
   const shiftPage = (dir: 1 | -1) => {
+    console.log('[chrona] shiftPage', dir, mode);
     if (mode === 'month') {
       setCenter((c) => addMonths(c.year, c.month, dir));
     } else {
@@ -116,7 +130,7 @@ export function CalendarScreen() {
       setSelectedDate(next);
       setCenter(monthOf(next));
     }
-    dragX.value = 0; // 데이터 시프트와 동시에 리셋 → 시각적으로 동일 프레임
+    dragX.value = 0; // 데이터 시프트와 동시 리셋 → 동일 프레임
     haptics.selection();
   };
 
@@ -125,45 +139,44 @@ export function CalendarScreen() {
     haptics.impact();
   };
 
-  // ── 제스처 ───────────────────────────────────────────
-  const collapseGesture = Gesture.Pan()
-    .activeOffsetY([-14, 14])
-    .failOffsetX([-14, 14])
+  // ── 단일 Pan + 축 잠금 ───────────────────────────────
+  const pan = Gesture.Pan()
+    .minDistance(10)
     .onStart(() => {
+      axis.value = 0;
       startProgress.value = progress.value;
     })
     .onUpdate((e) => {
-      const p = startProgress.value - e.translationY / COLLAPSE_DISTANCE;
-      progress.value = Math.min(1, Math.max(0, p));
-    })
-    .onEnd((e) => {
-      const fast = Math.abs(e.velocityY) > 500;
-      const target = fast ? (e.velocityY < 0 ? 1 : 0) : progress.value > 0.5 ? 1 : 0;
-      progress.value = withSpring(target, spring, (finished) => {
-        if (finished) runOnJS(syncMode)(target === 1 ? 'week' : 'month');
-      });
-    });
-
-  const pagerGesture = Gesture.Pan()
-    .activeOffsetX([-14, 14])
-    .failOffsetY([-14, 14])
-    .onUpdate((e) => {
-      dragX.value = e.translationX;
-    })
-    .onEnd((e) => {
-      const goNext = e.translationX < -width / 4 || e.velocityX < -500;
-      const goPrev = e.translationX > width / 4 || e.velocityX > 500;
-      if (!goNext && !goPrev) {
-        dragX.value = withSpring(0, spring);
-        return;
+      if (axis.value === 0) {
+        axis.value = Math.abs(e.translationY) >= Math.abs(e.translationX) ? 1 : 2;
       }
-      const dir = goNext ? 1 : -1;
-      dragX.value = withSpring(-dir * width, spring, (finished) => {
-        if (finished) runOnJS(shiftPage)(dir as 1 | -1);
-      });
+      if (axis.value === 1) {
+        const p = startProgress.value - e.translationY / COLLAPSE_DISTANCE;
+        progress.value = Math.min(1, Math.max(0, p));
+      } else {
+        dragX.value = e.translationX;
+      }
+    })
+    .onEnd((e) => {
+      if (axis.value === 1) {
+        const fast = Math.abs(e.velocityY) > 500;
+        const target = fast ? (e.velocityY < 0 ? 1 : 0) : progress.value > 0.5 ? 1 : 0;
+        progress.value = withSpring(target, spring, (finished) => {
+          if (finished) runOnJS(syncMode)(target === 1 ? 'week' : 'month');
+        });
+      } else if (axis.value === 2) {
+        const goNext = e.translationX < -width / 4 || e.velocityX < -500;
+        const goPrev = e.translationX > width / 4 || e.velocityX > 500;
+        if (!goNext && !goPrev) {
+          dragX.value = withSpring(0, spring);
+          return;
+        }
+        const dir: 1 | -1 = goNext ? 1 : -1;
+        dragX.value = withSpring(-dir * width, spring, () => {
+          runOnJS(shiftPage)(dir);
+        });
+      }
     });
-
-  const gestures = Gesture.Race(collapseGesture, pagerGesture);
 
   const gridContainerStyle = useAnimatedStyle(() => ({
     height: CELL_HEIGHT + (MONTH_HEIGHT - CELL_HEIGHT) * (1 - progress.value),
@@ -195,7 +208,6 @@ export function CalendarScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.sm }]}>
-      {/* 헤더 */}
       <View style={styles.header}>
         <AppText variant="title" nums>
           {center.year}년 {center.month}월
@@ -209,7 +221,6 @@ export function CalendarScreen() {
         </View>
       </View>
 
-      {/* 요일 라벨 */}
       <View style={styles.weekdays}>
         {WEEKDAY_LABELS.map((w, i) => (
           <AppText
@@ -223,8 +234,7 @@ export function CalendarScreen() {
         ))}
       </View>
 
-      {/* 그리드: 세로 접기 + 가로 페이징 */}
-      <GestureDetector gesture={gestures}>
+      <GestureDetector gesture={pan}>
         <Animated.View style={gridContainerStyle}>
           <Animated.View style={pagerStyle}>
             <MonthPage
@@ -261,7 +271,6 @@ export function CalendarScreen() {
         </Animated.View>
       </GestureDetector>
 
-      {/* 선택한 날의 일정 — 하단 시트 */}
       <DaySheet
         date={selectedDate}
         events={events ?? []}
@@ -277,23 +286,24 @@ export function CalendarScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.md,
-  },
-  headerActions: { flexDirection: 'row', gap: spacing.md },
-  todayBtn: {
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  weekdays: { flexDirection: 'row', paddingBottom: spacing.xs },
-  weekdayLabel: { flex: 1, textAlign: 'center' },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.bg },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: spacing.lg,
+      paddingBottom: spacing.md,
+    },
+    headerActions: { flexDirection: 'row', gap: spacing.md },
+    todayBtn: {
+      borderColor: colors.border,
+      borderWidth: 1,
+      borderRadius: 999,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+    },
+    weekdays: { flexDirection: 'row', paddingBottom: spacing.xs },
+    weekdayLabel: { flex: 1, textAlign: 'center' },
+  });
