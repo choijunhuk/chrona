@@ -55,6 +55,16 @@ export default function More() {
       </View>
 
       <AppText variant="micro" color="textDim" style={styles.sectionLabel}>
+        기록
+      </AppText>
+      <View style={styles.card}>
+        <Pressable style={styles.row} onPress={() => router.push('/stats')}>
+          <AppText>통계</AppText>
+          <AppText color="textDim">›</AppText>
+        </Pressable>
+      </View>
+
+      <AppText variant="micro" color="textDim" style={styles.sectionLabel}>
         알람
       </AppText>
       <View style={styles.card}>
