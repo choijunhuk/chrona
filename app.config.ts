@@ -1,6 +1,8 @@
 import type { ExpoConfig } from 'expo/config';
 
 import withChronaAlarm from './plugins/withChronaAlarm';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const withChronaWidget = require('./plugins/withChronaWidget');
 
 const config: ExpoConfig = {
   name: 'Chrona',
@@ -42,4 +44,4 @@ const config: ExpoConfig = {
 };
 
 // config plugin은 (config) => config 함수 — 직접 적용한다
-export default withChronaAlarm(config);
+export default withChronaWidget(withChronaAlarm(config));

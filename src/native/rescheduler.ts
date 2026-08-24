@@ -12,6 +12,7 @@ import {
   expandStandaloneAlarms,
 } from '@/domain/schedule';
 import { readRescheduleSource, refreshRescheduleSource } from '@/data/reschedule-source';
+import { pushWidgetData } from '@/native/widget';
 import {
   cancelAllTriggers,
   cancelOngoing,
@@ -124,7 +125,8 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
   } else {
     await cancelOngoing();
   }
-  // TODO(Stage 9): 위젯용 SharedPreferences write
+  // 위젯 데이터 write + 갱신 (stage-9 — Stage 3 훅 채움)
+  await pushWidgetData(occurrences, source.events, tz);
 
   const nextAt = planned[0]?.fireAt ?? null;
   console.log(
