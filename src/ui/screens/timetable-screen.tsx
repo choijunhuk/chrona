@@ -29,7 +29,7 @@ import {
   useSetActiveSemester,
   useTimetableEvents,
 } from '@/data/hooks/timetable';
-import type { ChronaEvent, PeriodPreset, Semester } from '@/domain/types';
+import type { ChronaEvent, Semester } from '@/domain/types';
 import { toDateOnly } from '@/domain/time';
 import { Button } from '@/ui/components/button';
 import { haptics } from '@/ui/components/haptics';
@@ -68,7 +68,7 @@ export function TimetableScreen() {
   const [title, setTitle] = useState('');
   const [room, setRoom] = useState('');
 
-  const rows = periods ?? [];
+  const rows = useMemo(() => periods ?? [], [periods]);
 
   // 블록 배치: 이벤트 시각 ↔ 교시 겹침
   const blocks = useMemo<Block[]>(() => {

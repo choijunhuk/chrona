@@ -50,7 +50,7 @@ export default function Timer() {
   const params = useLocalSearchParams<{ eventId?: string; title?: string }>();
   const timer = useTimerStore((s) => s.timer);
 
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const progress = useSharedValue(0);
 
   useEffect(() => {
