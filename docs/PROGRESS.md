@@ -36,3 +36,13 @@
 - 실기기 검증 결과: 9/9 통과 (SM-S928N). 핵심인 5번(뉴욕 시간대에서 종일 일정 날짜 불변) 통과
 - 미결 / 다음으로 넘긴 것: rrule 전개(Stage 5), reminders 연결(Stage 3), focus_sessions(Stage 6), 로그아웃 UI를 /more로 이동(Stage 2), database.types.ts를 gen 산출물로 교체(supabase login 후)
 - 발견한 함정: ① Supabase 직접 DB 연결은 IPv6 전용 → 세션 풀러 사용 ② 무료 티어 메일 시간당 2통 → dev-login.sh 우회 ③ adb shell URL의 `#`는 기기 셸 주석 처리 → 전체 인용 필수 ④ auth-callback 라우트 없으면 Unmatched Route ⑤ TanStack onlineManager는 NetInfo에 수동 연결 ⑥ .env는 빌드 시점에 구워짐 — 변경 시 재빌드
+
+## Stage 2 — 캘린더 UI (월↔주 전환 + 디자인 토큰)
+
+- 완료일: 2026-08-24
+- 브랜치 / 머지 커밋: `stage-2-calendar-ui` / (머지 대기)
+- 구현 요약: 디자인 토큰(다크+라이트)+테마 스위치, Pretendard, 기본 컴포넌트, 월↔주 인터랙티브 전환(단일 Pan 축잠금·전 과정 worklet), 3페이지 캐러셀, 제목 실린 일정 필(연속 일정 주 넘어 이어짐), 3단 시트+타임라인, 일정 편집기(종일 토글 §7.2 강제), 더보기 탭
+- DoD 충족: 색상 리터럴 린트 0 ✓ / worklet-only ✓ / 드래그 중 runOnJS 0 ✓ / ARCHITECTURE ✓. 검증 9개 중 6개 통과(1·3·4·5·6·8), 2(GPU 프로파일)·7(오프라인 렌더)·9(포커스 애니 정지)는 사용자 판단으로 생략, 스크린 레코딩 DoD 생략
+- 실기기 검증 결과: 스와이프→달 전환 380ms 계측(adb 주입), 연속 필·테마 전환 스크린샷 검증
+- 미결 / 다음으로 넘긴 것: 주간 모드 시 필 레이아웃 정밀화, 타임라인 디자인 폴리싱, 검색(추후), 라이트 테마 잔여 폴리싱(Stage 8), **디자인 개선 지속(사용자 요청 — Stage 3부터 각 스테이지에 포함)**
+- 발견한 함정: ① withSpring 완료 콜백은 rest 임계값 완화 없이는 수 초 지연 ② persist 복원 시 Date→문자열 (deserialize 리바이버 필수) ③ queryKey 프리픽스 매칭이 상세 쿼리까지 침범 — Array.isArray 가드 ④ zustand persist 미들웨어 Hermes 크래시 ⑤ BottomSheetView 정적 헤더 금지

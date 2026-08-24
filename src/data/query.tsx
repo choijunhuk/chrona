@@ -18,9 +18,18 @@ export const queryClient = new QueryClient({
   },
 });
 
+// 캐시 복원 시 Date 되살리기 — JSON은 Date를 ISO 문자열로 저장한다.
+// 이거 없으면 오프라인 복원 직후 .getTime() 호출에서 앱이 죽는다 (Stage 2에서 실제 발생).
+// 'T'를 포함하는 완전한 ISO timestamp만 변환 — DateOnly('YYYY-MM-DD')는 문자열 유지 (§7.2).
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+
 const persister = createAsyncStoragePersister({
   storage: AsyncStorage,
   key: 'chrona.query-cache', // Stage 0의 알람 저장 키와 네임스페이스 분리
+  deserialize: (cached) =>
+    JSON.parse(cached, (_key, value) =>
+      typeof value === 'string' && ISO_RE.test(value) ? new Date(value) : value
+    ),
 });
 
 export function QueryProvider({ children }: { children: ReactNode }) {

@@ -8,6 +8,21 @@ module.exports = defineConfig([
     ignores: ['dist/*', 'android/*', 'ios/*'],
   },
   {
+    // 색상 리터럴 금지 — 토큰(src/ui/tokens)만 사용 (stage-2 §1-1)
+    // 예외: 토큰 정의 자체, dev 전용 debug 화면
+    files: ['src/ui/**/*.tsx', 'src/ui/**/*.ts', 'app/**/*.tsx'],
+    ignores: ['src/ui/tokens/**', 'app/debug.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "Literal[value=/^#[0-9a-fA-F]{3,8}$/]",
+          message: '색상 리터럴 금지 — src/ui/tokens 를 사용하세요 (stage-2 §1-1).',
+        },
+      ],
+    },
+  },
+  {
     // src/domain must stay pure TypeScript — reused as-is on web (master §2)
     files: ['src/domain/**/*.ts', 'src/domain/**/*.tsx'],
     rules: {

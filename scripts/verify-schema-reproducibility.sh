@@ -13,6 +13,8 @@ HOST=aws-0-ap-northeast-2.pooler.supabase.com
 USER=postgres.jhwleoidvzxkdbylweqx
 
 echo "== 1. 스키마 드랍"
+# 아래 grant는 Supabase 스톡 초기화와 동일한 복원이다 (drop schema가 날린 것 재생성).
+# Supabase에서 접근 제어 경계는 grant가 아니라 RLS — 전 테이블 RLS ON (0002_rls.sql).
 $PSQL -h $HOST -p 5432 -U $USER -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 drop schema public cascade;
 create schema public;

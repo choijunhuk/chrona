@@ -1,5 +1,5 @@
 /** 매직링크 로그인 화면 (stage-1 §1-2). 디자인 폴리싱은 Stage 8. */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -11,8 +11,12 @@ import {
 } from 'react-native';
 
 import { sendMagicLink } from '@/data/auth';
+import { useTheme } from '@/ui/theme';
+import { type ThemeColors } from '@/ui/tokens';
 
 export default function Auth() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [email, setEmail] = useState('');
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
@@ -51,7 +55,7 @@ export default function Auth() {
               value={email}
               onChangeText={setEmail}
               placeholder="you@example.com"
-              placeholderTextColor="#5E6473"
+              placeholderTextColor={colors.textDim}
               keyboardType="email-address"
               autoCapitalize="none"
               autoComplete="email"
@@ -59,7 +63,7 @@ export default function Auth() {
             />
             <Pressable style={styles.button} onPress={submit} disabled={state === 'sending'}>
               {state === 'sending' ? (
-                <ActivityIndicator color="#EDEFF5" />
+                <ActivityIndicator color={colors.text} />
               ) : (
                 <Text style={styles.buttonText}>매직링크 보내기</Text>
               )}
@@ -72,29 +76,29 @@ export default function Auth() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0E0F13', justifyContent: 'center', padding: 24 },
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg, justifyContent: 'center', padding: 24 },
   box: { gap: 16 },
-  title: { color: '#EDEFF5', fontSize: 32, fontWeight: '700', textAlign: 'center' },
-  body: { color: '#EDEFF5', fontSize: 20, fontWeight: '600' },
-  sub: { color: '#9BA1B0', fontSize: 15, lineHeight: 22 },
+  title: { color: colors.text, fontSize: 32, fontWeight: '700', textAlign: 'center' },
+  body: { color: colors.text, fontSize: 20, fontWeight: '600' },
+  sub: { color: colors.textSub, fontSize: 15, lineHeight: 22 },
   input: {
-    backgroundColor: '#17191F',
-    borderColor: '#282C36',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 14,
-    color: '#EDEFF5',
+    color: colors.text,
     fontSize: 15,
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
   button: {
-    backgroundColor: '#6C7BFF',
+    backgroundColor: colors.accent,
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',
   },
-  buttonText: { color: '#EDEFF5', fontSize: 15, fontWeight: '600' },
-  link: { color: '#6C7BFF', fontSize: 15 },
-  error: { color: '#FF6B6B', fontSize: 13 },
+  buttonText: { color: colors.text, fontSize: 15, fontWeight: '600' },
+  link: { color: colors.accent, fontSize: 15 },
+  error: { color: colors.danger, fontSize: 13 },
 });

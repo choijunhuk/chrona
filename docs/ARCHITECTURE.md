@@ -141,3 +141,51 @@ app/auth.tsx           로그인. app/auth-callback.tsx 복귀 라우트 (없으
 - supabase gen types는 Docker 또는 access token 필요 → 수기 타입 유지 중.
   스키마 변경 시 information_schema 쿼리로 대조 (또는 `supabase login` 후 pnpm types).
 - expo-constants extra는 빌드 시점에 .env를 굽는다 — **.env 변경 시 APK 재빌드 필요.**
+
+
+---
+
+## Stage 2 — 캘린더 UI
+
+### 구조
+
+```
+src/ui/tokens/          colors(다크+라이트)/typography/spacing/radius/motion. 색상 리터럴은 린트로 금지
+src/ui/theme.ts         useTheme() — dark/light/system, AsyncStorage 수동 persist
+src/ui/components/      AppText(variant/nums)/Surface/Button/Skeleton/ColorDot/haptics
+src/domain/calendar.ts  월 격자(항상 6주)/주 계산/한국어 날짜 라벨 — 월요일 시작. 테스트 7
+src/ui/screens/calendar/
+  calendar-screen.tsx   단일 Pan 축잠금 제스처(접기+페이징), 3페이지 캐러셀, 필 레인 배치
+  month-page.tsx        6주 상시 렌더 + 제목 실린 일정 필 레이어(3레인, 주 넘어 이어짐)
+  day-sheet.tsx         3단 스냅 시트, 카드 아이템, full=타임라인
+  timeline-day.tsx      0~24h 격자, 겹침 가로분할, 현재시각 라인
+src/ui/screens/event-editor.tsx  종일 토글 = §7.2 UI 강제. 초기값은 폼 마운트 시 주입(effect setState 회피)
+app/(tabs)/             calendar + more(테마 스위치/디버그/로그아웃)
+```
+
+### 핵심 결정
+
+- **월↔주 전환**: progress(0~1) shared value 하나로 컨테이너 높이·행 translateY·행 opacity 전부
+  interpolate. 6주 그리드 상시 렌더(리마운트 없음), 드래그 중 runOnJS 0회, 스냅 완료 콜백에서 1회.
+- **제스처는 단일 Pan + 축 잠금**: Race(세로Pan, 가로Pan) 조합은 첫 프레임 지터로 오판 —
+  이동량 12px 이후 |tx| vs |ty|로 축 결정.
+- **일정 표기 = 제목 실린 필**: 단일/연속 동일 레인 시스템(주당 3레인), 연속 일정은 주 행을
+  가로질러 이어짐. 넘친 일정은 셀에 +N.
+- **페이지 시프트**: 스냅 후 데이터 시프트 + translateX 리셋을 useLayoutEffect(커밋 프레임)에서 —
+  shiftPage 내 리셋은 1프레임 플래시.
+- 라이트 테마를 Stage 8에서 당겨옴 (사용자 요청). 알람 화면·debug는 의도적으로 정적 다크.
+
+### 함정 (실기기에서 발견)
+
+- **withSpring 완료 콜백은 rest 임계값까지 안 불린다**: 기본 임계값(0.01px)이면 화면상 멈춘 뒤에도
+  서브픽셀 진동 수 초 → 콜백(=달 전환)이 그만큼 지연. 제스처 스냅엔 `springSnap`
+  (restDisplacementThreshold 0.5, restSpeedThreshold 1, overshootClamping) 필수.
+- **TanStack persist 복원은 Date를 문자열로 되살린다** → 첫 렌더 .getTime() 크래시.
+  persister deserialize에서 ISO(T 포함) 문자열만 Date 리바이브. DateOnly는 문자열 유지 (§7.2).
+- **낙관적 업데이트의 queryKey 프리픽스 매칭 주의**: ['events'] 필터가 상세 쿼리(객체)까지 매칭 —
+  updater는 Array.isArray 가드 필수 ('iterator method is not callable' 크래시).
+- **zustand/middleware persist가 Hermes 릴리즈에서 크래시** → 수동 AsyncStorage hydrate 사용.
+- **BottomSheetView는 정적 헤더에 쓰면 접힌다** — 스크롤러블과 섞을 땐 일반 View.
+- adb `shell input swipe`로 제스처 재현 + `screencap` 스크린샷으로 UI를 원격 검증 가능
+  (화면 꺼져 있으면 input 무시됨 — KEYCODE_WAKEUP 먼저).
+- expo config 로더/린트: 이 화면 계열은 react-hooks/immutability·refs 오탐 → 파일 상단 off.
