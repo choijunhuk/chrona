@@ -15,6 +15,7 @@ import { rescheduleAll } from '@/native/rescheduler';
 import { maybeWeeklyCheck } from '@/native/permissions';
 import { restoreTimer } from '@/native/timer';
 import { useTheme } from '@/ui/theme';
+import { darkColors } from '@/ui/tokens';
 
 // 스플래시는 폰트 로딩까지 유지 (stage-2 §1-2)
 void SplashScreen.preventAutoHideAsync();
@@ -158,12 +159,25 @@ export default function RootLayout() {
   );
 }
 
+// ErrorBoundary는 테마 훅이 죽어도 동작해야 하므로 정적 다크 팔레트 사용
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  // eslint-disable-next-line no-restricted-syntax -- ErrorBoundary는 테마 시스템 밖에서도 동작해야 함
-  crash: { flex: 1, backgroundColor: '#0E0F13', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
-  crashTitle: { color: '#EDEFF5', fontSize: 20, fontWeight: '600' },
-  crashBody: { color: '#9BA1B0', fontSize: 13, textAlign: 'center' },
-  crashBtn: { backgroundColor: '#6C7BFF', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginTop: 12 },
-  crashBtnText: { color: '#FFFFFF', fontWeight: '600' },
+  crash: {
+    flex: 1,
+    backgroundColor: darkColors.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    gap: 12,
+  },
+  crashTitle: { color: darkColors.text, fontSize: 20, fontWeight: '600' },
+  crashBody: { color: darkColors.textSub, fontSize: 13, textAlign: 'center' },
+  crashBtn: {
+    backgroundColor: darkColors.accent,
+    borderRadius: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    marginTop: 12,
+  },
+  crashBtnText: { color: darkColors.white, fontWeight: '600' },
 });

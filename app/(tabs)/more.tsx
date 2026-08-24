@@ -1,18 +1,16 @@
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, ToastAndroid, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Constants from 'expo-constants';
-import { ToastAndroid } from 'react-native';
 
 import { signOut } from '@/data/auth';
 import { exportBackup, exportIcs, importBackup } from '@/data/backup';
-import { hapticsEnabled, setHapticsEnabled } from '@/ui/components/haptics';
 import { useSettings, useUpdateSettings } from '@/data/hooks/settings';
 import { AppText } from '@/ui/components/text';
-import { haptics } from '@/ui/components/haptics';
+import { haptics, hapticsEnabled, setHapticsEnabled } from '@/ui/components/haptics';
 import { useTheme } from '@/ui/theme';
 import { radius, spacing, type ThemeColors } from '@/ui/tokens';
 
