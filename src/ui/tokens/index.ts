@@ -2,4 +2,4 @@ export { colors, darkColors, lightColors, palette, type ColorToken, type ThemeCo
 export { typography, tabularNums, type TypographyVariant } from './typography';
 export { spacing } from './spacing';
 export { radius } from './radius';
-export { spring, springSoft, springSnappy } from './motion';
+export { spring, springSnap, springSoft, springSnappy } from './motion';

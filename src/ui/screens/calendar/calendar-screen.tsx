@@ -33,18 +33,20 @@ import { fromDateOnly, toDateOnly, todayDateOnly, type DateOnly } from '@/domain
 import { haptics } from '@/ui/components/haptics';
 import { AppText } from '@/ui/components/text';
 import { useTheme } from '@/ui/theme';
-import { spacing, spring, type ThemeColors } from '@/ui/tokens';
+import { spacing, springSnap, type ThemeColors } from '@/ui/tokens';
 
-import { COLLAPSE_DISTANCE, CELL_HEIGHT, MONTH_HEIGHT } from './constants';
 import { DaySheet } from './day-sheet';
-import { MonthPage, type DayDots } from './month-page';
+import { MonthPage, MAX_LANES, type DayDots, type WeekBar } from './month-page';
 
 const TZ = 'Asia/Seoul';
 
 export function CalendarScreen() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  // 그리드가 화면을 채우도록 셀 높이를 동적으로 (하단 시트 peek·탭바·헤더 제외)
+  const cellHeight = Math.min(78, Math.max(56, Math.floor((height - 340) / 6)));
+  const collapseDistance = cellHeight * 5;
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const today = todayDateOnly(TZ);
@@ -83,31 +85,67 @@ export function CalendarScreen() {
   const { data: events, isPending } = useEvents(range);
   const { data: categories } = useCategories();
 
-  const dots = useMemo<DayDots>(() => {
+  // 단일 일정 → 점, 여러 날 걸침 → 연속 바 (사용자 요청: 이어지는 느낌)
+  const { dots, spans } = useMemo(() => {
     const catColor = new Map((categories ?? []).map((c) => [c.id, c.color]));
-    const map: DayDots = {};
-    const push = (d: string, color: string) => (map[d] = [...(map[d] ?? []), color]);
-    const pushSpan = (from: DateOnly, to: DateOnly, color: string) => {
-      let d = from;
-      for (let i = 0; i < 60 && d <= to; i++) {
-        push(d, color);
-        d = addDaysOnly(d, 1);
-      }
-    };
+    const dotMap: DayDots = {};
+    const spanList: { from: DateOnly; to: DateOnly; color: string }[] = [];
+    const push = (d: string, color: string) => (dotMap[d] = [...(dotMap[d] ?? []), color]);
     for (const e of events ?? []) {
       const color =
         e.color ?? (e.categoryId ? (catColor.get(e.categoryId) ?? colors.accent) : colors.accent);
+      let from: DateOnly | null = null;
+      let to: DateOnly | null = null;
       if (e.allDay && e.startDate) {
-        pushSpan(e.startDate, e.endDate ?? e.startDate, color);
+        from = e.startDate;
+        to = e.endDate ?? e.startDate;
       } else if (e.startsAt) {
-        // 자정을 넘는 일정은 걸치는 모든 날에 점 표시 (사용자 요청: 이어지는 일정)
-        pushSpan(toDateOnly(e.startsAt, TZ), toDateOnly(e.endsAt ?? e.startsAt, TZ), color);
+        from = toDateOnly(e.startsAt, TZ);
+        to = toDateOnly(e.endsAt ?? e.startsAt, TZ);
       } else if (e.dueAt) {
-        push(toDateOnly(e.dueAt, TZ), color);
+        from = to = toDateOnly(e.dueAt, TZ);
       }
+      if (!from || !to) continue;
+      if (from === to) push(from, color);
+      else spanList.push({ from, to, color });
     }
-    return map;
+    return { dots: dotMap, spans: spanList };
   }, [events, categories, colors.accent]);
+
+  const barsFor = (grid: MonthGridCell[][]): WeekBar[][] =>
+    grid.map((week) => {
+      const rowBars: WeekBar[] = [];
+      const weekStart = week[0].date;
+      const weekEnd = week[6].date;
+      const candidates = spans
+        .filter((sp) => sp.from <= weekEnd && sp.to >= weekStart)
+        .map((sp) => {
+          const startCol = week.findIndex((c) => c.date >= sp.from);
+          const endIdx = [...week].reverse().findIndex((c) => c.date <= sp.to);
+          return { startCol: Math.max(0, startCol), endCol: 6 - Math.max(0, endIdx), color: sp.color };
+        })
+        .sort((a, b) => a.startCol - b.startCol);
+      for (const c of candidates) {
+        let lane = 0;
+        while (
+          lane < MAX_LANES &&
+          rowBars.some((b) => b.lane === lane && c.startCol <= b.endCol && b.startCol <= c.endCol)
+        ) {
+          lane++;
+        }
+        if (lane >= MAX_LANES) continue; // 초과분은 생략 (레인 2개까지)
+        rowBars.push({ ...c, lane });
+      }
+      return rowBars;
+    });
+
+  const centerBars = useMemo(() => barsFor(centerGrid), [centerGrid, spans]); // eslint-disable-line react-hooks/exhaustive-deps
+  const prevBars = useMemo(() => barsFor(isWeekModeRef() ? prevWeekGrid : prevGrid), [prevWeekGrid, prevGrid, spans, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const nextBars = useMemo(() => barsFor(isWeekModeRef() ? nextWeekGrid : nextGrid), [nextWeekGrid, nextGrid, spans, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function isWeekModeRef() {
+    return mode === 'week';
+  }
 
   // ── 애니메이션 상태 ──────────────────────────────────
   const progress = useSharedValue(0);
@@ -160,7 +198,7 @@ export function CalendarScreen() {
         axis.value = ay >= ax ? 1 : 2;
       }
       if (axis.value === 1) {
-        const p = startProgress.value - e.translationY / COLLAPSE_DISTANCE;
+        const p = startProgress.value - e.translationY / collapseDistance;
         progress.value = Math.min(1, Math.max(0, p));
       } else {
         dragX.value = e.translationX;
@@ -170,25 +208,25 @@ export function CalendarScreen() {
       if (axis.value === 1) {
         const fast = Math.abs(e.velocityY) > 500;
         const target = fast ? (e.velocityY < 0 ? 1 : 0) : progress.value > 0.5 ? 1 : 0;
-        progress.value = withSpring(target, spring, (finished) => {
-          if (finished) runOnJS(syncMode)(target === 1 ? 'week' : 'month');
+        progress.value = withSpring(target, springSnap, () => {
+          runOnJS(syncMode)(target === 1 ? 'week' : 'month');
         });
       } else if (axis.value === 2) {
         const goNext = e.translationX < -width / 4 || e.velocityX < -500;
         const goPrev = e.translationX > width / 4 || e.velocityX > 500;
         if (!goNext && !goPrev) {
-          dragX.value = withSpring(0, spring);
+          dragX.value = withSpring(0, springSnap);
           return;
         }
         const dir: 1 | -1 = goNext ? 1 : -1;
-        dragX.value = withSpring(-dir * width, spring, () => {
+        dragX.value = withSpring(-dir * width, springSnap, () => {
           runOnJS(shiftPage)(dir);
         });
       }
     });
 
   const gridContainerStyle = useAnimatedStyle(() => ({
-    height: CELL_HEIGHT + (MONTH_HEIGHT - CELL_HEIGHT) * (1 - progress.value),
+    height: cellHeight + collapseDistance * (1 - progress.value),
     overflow: 'hidden' as const,
   }));
 
@@ -249,6 +287,8 @@ export function CalendarScreen() {
             <MonthPage
               grid={isWeekMode ? prevWeekGrid : prevGrid}
               width={width}
+              cellHeight={cellHeight}
+              barsByRow={prevBars}
               progress={progress}
               selectedWeekIndex={sideWeekIndex}
               selectedDate={selectedDate}
@@ -259,6 +299,8 @@ export function CalendarScreen() {
             <MonthPage
               grid={centerGrid}
               width={width}
+              cellHeight={cellHeight}
+              barsByRow={centerBars}
               progress={progress}
               selectedWeekIndex={selectedWeekIndex}
               selectedDate={selectedDate}
@@ -269,6 +311,8 @@ export function CalendarScreen() {
             <MonthPage
               grid={isWeekMode ? nextWeekGrid : nextGrid}
               width={width}
+              cellHeight={cellHeight}
+              barsByRow={nextBars}
               progress={progress}
               selectedWeekIndex={sideWeekIndex}
               selectedDate={selectedDate}
