@@ -24,7 +24,7 @@ module.exports = defineConfig([
   },
   {
     // src/domain must stay pure TypeScript — reused as-is on web (master §2)
-    files: ['src/domain/**/*.ts', 'src/domain/**/*.tsx'],
+    files: ['packages/domain/**/*.ts', 'packages/domain/**/*.tsx'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -32,7 +32,7 @@ module.exports = defineConfig([
           patterns: [
             {
               group: ['react-native', 'react-native/*', 'react-native-*', 'expo', 'expo-*', '@expo/*', '@notifee/*', '@react-native-async-storage/*', '@supabase/*', '@tanstack/*', 'zustand', 'zustand/*'],
-              message: 'src/domain/ must not depend on React Native or Expo (master spec §2).',
+              message: 'packages/domain/ must not depend on React Native or Expo (master spec §2).',
             },
           ],
         },

@@ -1,3 +1,6 @@
+packages:
+  - 'packages/*'
+  - 'web'
 allowBuilds:
   unrs-resolver: true
 minimumReleaseAgeExclude:

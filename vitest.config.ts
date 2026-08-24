@@ -5,11 +5,13 @@ import * as path from 'path';
 export default defineConfig({
   resolve: {
     alias: {
+      '@/domain': path.resolve(__dirname, 'packages/domain/src'),
+      '@chrona/domain': path.resolve(__dirname, 'packages/domain/src'),
       '@': path.resolve(__dirname, 'src'),
     },
   },
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'packages/**/*.test.ts'],
     environment: 'node',
   },
 });
