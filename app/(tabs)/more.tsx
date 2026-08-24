@@ -1,7 +1,7 @@
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, ToastAndroid, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, ToastAndroid, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Constants from 'expo-constants';
@@ -96,11 +96,23 @@ export default function More() {
         <Pressable
           style={styles.row}
           onPress={() =>
-            void importBackup()
-              .then((r) => {
-                if (r) ToastAndroid.show(`${r.restored}건 복원됨`, ToastAndroid.LONG);
-              })
-              .catch((e) => ToastAndroid.show(String(e), ToastAndroid.LONG))
+            Alert.alert(
+              '백업 가져오기',
+              '같은 id의 기존 데이터를 백업 내용으로 덮어씁니다. 계속할까요?',
+              [
+                { text: '취소', style: 'cancel' },
+                {
+                  text: '가져오기',
+                  style: 'destructive',
+                  onPress: () =>
+                    void importBackup()
+                      .then((r) => {
+                        if (r) ToastAndroid.show(`${r.restored}건 복원됨`, ToastAndroid.LONG);
+                      })
+                      .catch((e) => ToastAndroid.show(String(e), ToastAndroid.LONG)),
+                },
+              ]
+            )
           }
         >
           <AppText>백업 가져오기</AppText>

@@ -53,6 +53,8 @@ export async function importBackup(): Promise<{ restored: number } | null> {
   const picked = await DocumentPicker.getDocumentAsync({ type: 'application/json' });
   if (picked.canceled || !picked.assets[0]) return null;
   const file = new File(picked.assets[0].uri);
+  // 크기 캡 — 비정상 파일 파싱 방지 (개인 백업은 수백 KB 수준)
+  if ((file.size ?? 0) > 20 * 1024 * 1024) throw new Error('백업 파일이 너무 큽니다 (20MB 초과)');
   const parsed = JSON.parse(file.textSync()) as Backup;
   if (parsed.app !== 'chrona') throw new Error('Chrona 백업 파일이 아닙니다');
   if (parsed.schemaVersion !== SCHEMA_VERSION) {
