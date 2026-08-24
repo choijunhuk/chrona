@@ -82,8 +82,8 @@ const WeekRow = memo(function WeekRow({
                 <ColorDot key={i} color={c} size={4} />
               ))}
               {cellDots.length > 3 && (
-                <AppText variant="micro" color="textDim">
-                  +{cellDots.length - 3}
+                <AppText variant="micro" color="textDim" style={styles.moreCount}>
+                  +{Math.min(cellDots.length - 3, 9)}
                 </AppText>
               )}
             </View>
@@ -126,5 +126,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dayNum: { lineHeight: 18 },
-  dotsRow: { flexDirection: 'row', gap: 3, marginTop: 2, alignItems: 'center', height: 10 },
+  dotsRow: {
+    flexDirection: 'row',
+    gap: 3,
+    marginTop: 2,
+    alignItems: 'center',
+    height: 12,
+    overflow: 'hidden',
+  },
+  moreCount: { fontSize: 9, lineHeight: 11 },
 });

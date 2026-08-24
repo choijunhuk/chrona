@@ -91,7 +91,7 @@ export function useCreateEvent() {
         updatedAt: new Date(),
       };
       qc.setQueriesData<ChronaEvent[]>({ queryKey: qk.allEvents() }, (old) =>
-        old ? [...old, optimistic] : old
+        Array.isArray(old) ? [...old, optimistic] : old
       );
       return { snapshot };
     },
@@ -121,7 +121,9 @@ export function useUpdateEvent() {
       await qc.cancelQueries({ queryKey: qk.allEvents() });
       const snapshot = qc.getQueriesData<ChronaEvent[]>({ queryKey: qk.allEvents() });
       qc.setQueriesData<ChronaEvent[]>({ queryKey: qk.allEvents() }, (old) =>
-        old?.map((e) => (e.id === id ? { ...e, ...draft, updatedAt: new Date() } : e))
+        Array.isArray(old)
+          ? old.map((e) => (e.id === id ? { ...e, ...draft, updatedAt: new Date() } : e))
+          : old
       );
       return { snapshot };
     },
@@ -148,7 +150,7 @@ export function useDeleteEvent() {
       await qc.cancelQueries({ queryKey: qk.allEvents() });
       const snapshot = qc.getQueriesData<ChronaEvent[]>({ queryKey: qk.allEvents() });
       qc.setQueriesData<ChronaEvent[]>({ queryKey: qk.allEvents() }, (old) =>
-        old?.filter((e) => e.id !== id)
+        Array.isArray(old) ? old.filter((e) => e.id !== id) : old
       );
       return { snapshot };
     },

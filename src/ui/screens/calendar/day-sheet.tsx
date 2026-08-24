@@ -2,7 +2,7 @@
  * 선택한 날의 일정 하단 시트 (stage-2 §1-5·1-6·1-8).
  * 3단 스냅 (peek / half / full). full에서는 타임라인 뷰.
  */
-import BottomSheet, { BottomSheetFlashList, BottomSheetView } from '@gorhom/bottom-sheet';
+import BottomSheet, { BottomSheetFlashList } from '@gorhom/bottom-sheet';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -36,7 +36,7 @@ export function DaySheet({ date, events, categories, loading, tz, onPressEvent, 
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [snapIndex, setSnapIndex] = useState(0);
-  const snapPoints = useMemo(() => ['14%', '45%', '90%'], []);
+  const snapPoints = useMemo(() => ['16%', '45%', '90%'], []);
 
   const dayEvents = useMemo(() => {
     const timed: ChronaEvent[] = [];
@@ -92,7 +92,7 @@ export function DaySheet({ date, events, categories, loading, tz, onPressEvent, 
       backgroundStyle={styles.sheetBg}
       handleIndicatorStyle={styles.handle}
     >
-      <BottomSheetView style={styles.sheetHeader}>
+      <View style={styles.sheetHeader}>
         <AppText variant="caption" color="textSub" nums>
           {date}
         </AppText>
@@ -101,13 +101,13 @@ export function DaySheet({ date, events, categories, loading, tz, onPressEvent, 
             + 추가
           </AppText>
         </Pressable>
-      </BottomSheetView>
+      </View>
 
       {loading ? (
-        <BottomSheetView style={styles.skeletons}>
+        <View style={styles.skeletons}>
           <Skeleton style={styles.skeletonLine} />
           <Skeleton style={[styles.skeletonLine, styles.skeletonShort]} />
-        </BottomSheetView>
+        </View>
       ) : snapIndex === 2 ? (
         <TimelineDay
           date={date}
@@ -117,34 +117,37 @@ export function DaySheet({ date, events, categories, loading, tz, onPressEvent, 
           tz={tz}
           onPressEvent={onPressEvent}
         />
+      ) : dayEvents.timed.length === 0 && dayEvents.allDay.length === 0 ? (
+        <View style={styles.empty}>
+          <AppText variant="caption" color="textDim">
+            일정이 없습니다
+          </AppText>
+        </View>
       ) : (
-        <>
-          {dayEvents.allDay.length > 0 && (
-            <BottomSheetView style={styles.allDayRow}>
-              {dayEvents.allDay.map((e) => (
-                <Pressable key={e.id} style={styles.allDayChip} onPress={() => onPressEvent(e.id)}>
-                  <ColorDot color={eventColor(e, categories)} size={6} />
-                  <AppText variant="caption">{e.title}</AppText>
-                </Pressable>
-              ))}
-            </BottomSheetView>
-          )}
-          {dayEvents.timed.length === 0 && dayEvents.allDay.length === 0 ? (
-            <BottomSheetView style={styles.empty}>
-              <AppText variant="caption" color="textDim">
-                일정이 없습니다
-              </AppText>
-            </BottomSheetView>
-          ) : (
-            <BottomSheetFlashList
-              data={dayEvents.timed}
-              keyExtractor={(e: ChronaEvent) => e.id}
-              renderItem={renderItem}
-              estimatedItemSize={56}
-              contentContainerStyle={styles.listContent}
-            />
-          )}
-        </>
+        // 종일 칩은 리스트 헤더로 — peek 높이에서 목록과 겹치지 않게 같이 스크롤
+        <BottomSheetFlashList
+          data={dayEvents.timed}
+          keyExtractor={(e: ChronaEvent) => e.id}
+          renderItem={renderItem}
+          estimatedItemSize={56}
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={
+            dayEvents.allDay.length > 0 ? (
+              <View style={styles.allDayRow}>
+                {dayEvents.allDay.map((e) => (
+                  <Pressable
+                    key={e.id}
+                    style={styles.allDayChip}
+                    onPress={() => onPressEvent(e.id)}
+                  >
+                    <ColorDot color={eventColor(e, categories)} size={6} />
+                    <AppText variant="caption">{e.title}</AppText>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null
+          }
+        />
       )}
     </BottomSheet>
   );

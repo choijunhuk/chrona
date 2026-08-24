@@ -1,3 +1,4 @@
+/* eslint react-hooks/immutability: "off", react-hooks/refs: "off" -- Reanimated shared value 쓰기는 전부 worklet/effect. React 상태 아님 */
 /**
  * 캘린더 화면 (stage-2 §1-4·1-5).
  * - progress(0=월, 1=주) 하나로 접기 전환 전부 구동 — 전 과정 UI 스레드
@@ -5,7 +6,7 @@
  * - 드래그 중 runOnJS 0회. 스냅 완료 콜백에서 상태 동기화 1회만
  */
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -122,7 +123,6 @@ export function CalendarScreen() {
   }, [centerGrid, selectedDate, selectedWeekIndex]);
 
   const shiftPage = (dir: 1 | -1) => {
-    console.log('[chrona] shiftPage', dir, mode);
     if (mode === 'month') {
       setCenter((c) => addMonths(c.year, c.month, dir));
     } else {
@@ -130,9 +130,14 @@ export function CalendarScreen() {
       setSelectedDate(next);
       setCenter(monthOf(next));
     }
-    dragX.value = 0; // 데이터 시프트와 동시 리셋 → 동일 프레임
     haptics.selection();
   };
+
+  // translateX 리셋은 새 데이터가 커밋된 프레임에 — shiftPage 안에서 하면
+  // 리렌더 전 1프레임 동안 이전 달로 되돌아가는 플래시가 보인다
+  useLayoutEffect(() => {
+    dragX.value = 0;
+  }, [center.year, center.month, selectedDate, dragX]);
 
   const syncMode = (m: 'month' | 'week') => {
     setMode(m);

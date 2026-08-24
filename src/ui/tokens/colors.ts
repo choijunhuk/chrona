@@ -17,13 +17,13 @@ export const darkColors = {
 export type ThemeColors = { [K in keyof typeof darkColors]: string };
 
 export const lightColors: ThemeColors = {
-  bg: '#F5F6FA',
+  bg: '#F6F7FA',
   surface: '#FFFFFF',
-  surfaceAlt: '#ECEEF4',
-  border: '#D8DBE4',
-  text: '#1A1C22',
-  textSub: '#5A6070',
-  textDim: '#9BA1B0',
+  surfaceAlt: '#EEF0F5',
+  border: '#E2E5EC',
+  text: '#191B20',
+  textSub: '#616878',
+  textDim: '#A3A9B7',
   accent: '#5B6AE8',
   danger: '#E05252',
   success: '#2FA97C',
