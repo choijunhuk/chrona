@@ -21,6 +21,7 @@ import { useCreateEvent, useDeleteEvent, useEvent, useUpdateEvent } from '@/data
 import { useReminders, useSaveReminders } from '@/data/hooks/reminders';
 import { useCategories, useSettings } from '@/data/hooks/settings';
 import type { EventDraft, ReminderDraft } from '@/data/mappers';
+import { applicableTaskSteps } from '@/domain/task';
 import { asDateOnly, formatTimeLabel, fromDateOnly, isDateOnly, toDateOnly } from '@/domain/time';
 import { Button } from '@/ui/components/button';
 import { ColorDot } from '@/ui/components/color-dot';
@@ -34,6 +35,8 @@ const TZ = 'Asia/Seoul';
 type PickerTarget = 'startDate' | 'startTime' | 'endDate' | 'endTime' | null;
 
 type FormInitial = {
+  kind: 'schedule' | 'task';
+  isDone: boolean;
   title: string;
   memo: string;
   location: string;
@@ -87,12 +90,18 @@ export function EventEditor() {
   const initial: FormInitial =
     !isNew && e
       ? {
+          kind: e.kind === 'task' ? ('task' as const) : ('schedule' as const),
+          isDone: e.isDone,
           title: e.title,
           memo: e.memo ?? '',
           location: e.location ?? '',
           allDay: e.allDay,
           startsAt:
-            e.allDay && e.startDate ? fromDateOnly(e.startDate, TZ) : (e.startsAt ?? defaultStart),
+            e.kind === 'task'
+              ? (e.dueAt ?? defaultStart)
+              : e.allDay && e.startDate
+                ? fromDateOnly(e.startDate, TZ)
+                : (e.startsAt ?? defaultStart),
           endsAt:
             e.allDay && e.startDate
               ? fromDateOnly(e.endDate ?? e.startDate, TZ)
@@ -108,6 +117,8 @@ export function EventEditor() {
           })),
         }
       : {
+          kind: 'schedule' as const,
+          isDone: false,
           title: '',
           memo: '',
           location: '',
@@ -151,31 +162,76 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
   const [categoryId, setCategoryId] = useState<string | null>(initial.categoryId);
   const [color, setColor] = useState<string | null>(initial.color);
   const [picker, setPicker] = useState<PickerTarget>(null);
+  const [kind, setKind] = useState<'schedule' | 'task'>(initial.kind);
+  const [isDone, setIsDone] = useState(initial.isDone);
   const [reminders, setReminders] = useState<ReminderDraft[]>(initial.reminders);
+
+  // 과제 모드 전환 시 계단식 알림 자동 세팅 (지난 단계 스킵 — stage-4 §1-2)
+  const switchKind = (k: 'schedule' | 'task') => {
+    if (!isNew) return; // 생성 시에만 전환 가능 (stage-4 §1-3)
+    setKind(k);
+    if (k === 'task') {
+      setReminders(
+        applicableTaskSteps(startsAt, new Date()).map((st) => ({
+          offsetMinutes: st.offsetMinutes,
+          mode: 'notify' as const,
+          soundKey: 'default',
+          vibrate: true,
+          enabled: true,
+        }))
+      );
+    } else {
+      setReminders(initial.reminders);
+    }
+  };
   const [showPresets, setShowPresets] = useState(false);
   const saveReminders = useSaveReminders();
 
-  const buildDraft = (): EventDraft => ({
-    kind: 'schedule',
-    title: title.trim() || '(제목 없음)',
-    memo: memo.trim() || null,
-    categoryId,
-    color,
-    allDay,
-    // §7.2: 종일이면 date만, 아니면 timestamp만
-    startsAt: allDay ? null : startsAt,
-    endsAt: allDay ? null : endsAt,
-    startDate: allDay ? toDateOnly(startsAt, TZ) : null,
-    endDate: allDay ? toDateOnly(endsAt, TZ) : null,
-    rrule: null,
-    rruleUntil: null,
-    dueAt: null,
-    isDone: false,
-    doneAt: null,
-    semesterId: null,
-    location: location.trim() || null,
-    professor: null,
-  });
+  const buildDraft = (): EventDraft => {
+    if (kind === 'task') {
+      return {
+        kind: 'task',
+        title: title.trim() || '(제목 없음)',
+        memo: memo.trim() || null,
+        categoryId,
+        color,
+        allDay: false,
+        startsAt: null,
+        endsAt: null,
+        startDate: null,
+        endDate: null,
+        rrule: null,
+        rruleUntil: null,
+        dueAt: startsAt, // 과제는 startsAt state를 마감으로 사용
+        isDone,
+        doneAt: isDone ? new Date() : null,
+        semesterId: null,
+        location: null,
+        professor: null,
+      };
+    }
+    return {
+      kind: 'schedule',
+      title: title.trim() || '(제목 없음)',
+      memo: memo.trim() || null,
+      categoryId,
+      color,
+      allDay,
+      // §7.2: 종일이면 date만, 아니면 timestamp만
+      startsAt: allDay ? null : startsAt,
+      endsAt: allDay ? null : endsAt,
+      startDate: allDay ? toDateOnly(startsAt, TZ) : null,
+      endDate: allDay ? toDateOnly(endsAt, TZ) : null,
+      rrule: null,
+      rruleUntil: null,
+      dueAt: null,
+      isDone: false,
+      doneAt: null,
+      semesterId: null,
+      location: location.trim() || null,
+      professor: null,
+    };
+  };
 
   const save = async () => {
     try {
@@ -240,7 +296,25 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
       style={styles.container}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + spacing.lg }]}
     >
-      <AppText variant="title">{isNew ? '새 일정' : '일정 편집'}</AppText>
+      <AppText variant="title">
+        {isNew ? '새로 만들기' : kind === 'task' ? '과제 편집' : '일정 편집'}
+      </AppText>
+
+      {isNew && (
+        <View style={styles.kindRow}>
+          {(['schedule', 'task'] as const).map((k) => (
+            <Pressable
+              key={k}
+              style={[styles.kindChip, kind === k && styles.kindChipOn]}
+              onPress={() => switchKind(k)}
+            >
+              <AppText variant="caption" color={kind === k ? 'white' : 'textSub'}>
+                {k === 'schedule' ? '일정' : '과제'}
+              </AppText>
+            </Pressable>
+          ))}
+        </View>
+      )}
 
       <TextInput
         style={styles.input}
@@ -250,19 +324,21 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
         placeholderTextColor={colors.textDim}
       />
 
-      <View style={styles.rowBetween}>
-        <AppText>종일</AppText>
-        <Switch
-          value={allDay}
-          onValueChange={setAllDay}
-          trackColor={{ true: colors.accent, false: colors.surfaceAlt }}
-          thumbColor={colors.text}
-        />
-      </View>
+      {kind === 'schedule' && (
+        <View style={styles.rowBetween}>
+          <AppText>종일</AppText>
+          <Switch
+            value={allDay}
+            onValueChange={setAllDay}
+            trackColor={{ true: colors.accent, false: colors.surfaceAlt }}
+            thumbColor={colors.text}
+          />
+        </View>
+      )}
 
       {/* 시각 필드 ↔ 날짜 필드 전환 (§7.2 UI 강제) */}
       <View style={styles.rowBetween}>
-        <AppText color="textSub">시작</AppText>
+        <AppText color="textSub">{kind === 'task' ? '마감' : '시작'}</AppText>
         <View style={styles.pickerRow}>
           <Pressable style={styles.pickerBtn} onPress={() => setPicker('startDate')}>
             <AppText nums>{toDateOnly(startsAt, TZ)}</AppText>
@@ -274,6 +350,18 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
           )}
         </View>
       </View>
+      {kind === 'task' && !isNew && (
+        <View style={styles.rowBetween}>
+          <AppText>완료</AppText>
+          <Switch
+            value={isDone}
+            onValueChange={setIsDone}
+            trackColor={{ true: colors.success, false: colors.surfaceAlt }}
+            thumbColor={colors.text}
+          />
+        </View>
+      )}
+      {kind === 'schedule' && (
       <View style={styles.rowBetween}>
         <AppText color="textSub">종료</AppText>
         <View style={styles.pickerRow}>
@@ -287,6 +375,7 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
           )}
         </View>
       </View>
+      )}
 
       {/* 알림 (stage-3 §1-5) */}
       <AppText variant="caption" color="textSub">
@@ -383,13 +472,15 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
         ))}
       </View>
 
-      <TextInput
-        style={styles.input}
-        value={location}
-        onChangeText={setLocation}
-        placeholder="장소"
-        placeholderTextColor={colors.textDim}
-      />
+      {kind === 'schedule' && (
+        <TextInput
+          style={styles.input}
+          value={location}
+          onChangeText={setLocation}
+          placeholder="장소"
+          placeholderTextColor={colors.textDim}
+        />
+      )}
       <TextInput
         style={[styles.input, styles.memo]}
         value={memo}
@@ -439,6 +530,16 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  kindRow: { flexDirection: 'row', gap: spacing.sm },
+  kindChip: {
+    flex: 1,
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+  },
+  kindChipOn: { backgroundColor: colors.accent, borderColor: colors.accent },
   reminderRow: {
     flexDirection: 'row',
     alignItems: 'center',
