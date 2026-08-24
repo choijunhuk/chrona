@@ -189,3 +189,49 @@ app/(tabs)/             calendar + more(테마 스위치/디버그/로그아웃)
 - adb `shell input swipe`로 제스처 재현 + `screencap` 스크린샷으로 UI를 원격 검증 가능
   (화면 꺼져 있으면 input 무시됨 — KEYCODE_WAKEUP 먼저).
 - expo config 로더/린트: 이 화면 계열은 react-hooks/immutability·refs 오탐 → 파일 상단 off.
+
+
+---
+
+## Stage 4~10 — 요약 (자율주행 구간)
+
+### Stage 4 — 과제 + 홈
+- `domain/task.ts`: 날짜 기준 D-day(자정 경계 테스트), 계단식 알림 상수(3일/1일/3시간, 지난 단계 스킵)
+- 홈: 다음 일정 60초 tick(포커스 한정), D-day 칩, 빠른 완료. 탭: 홈|캘린더|시간표|알람|더보기
+
+### Stage 5 — 반복 + 시간표
+- `domain/recurrence.ts`: **fake-UTC 기법** — rrule은 UTC 전용이라 벽시계를 UTC인 척 넣고 역변환.
+  DST 시간대에서도 벽시계 유지 (테스트로 증명)
+- override 병합: ms 정밀 original_start 매칭, range 밖↔안 이동 처리
+- 3지선다: 이만(override)/이후(rrule_until 자르고 복제+reminders 복사)/전체
+- `domain/display.ts`: 표시용 전개 (종일은 date 기준 — §7.2 유지). 캘린더/홈/시트/통계/위젯이 공유
+- 시간표: 교시축 격자, PanResponder 드래그 생성, 학기 복사, 일괄 10분 알림
+
+### Stage 6 — 타이머 + 브리핑
+- 타이머 진실 = 시작/종료 시각뿐. **알림 카운트다운은 OS chronometer** (JS 갱신 0회)
+- 완료 알람은 트리거 예약 → 앱 사후 종료에도 발화, background handler가 focus_sessions 기록
+- 브리핑: 재계산 파이프라인 합류, 내용은 예약 시점 문자열 생성 (§3.5)
+
+### Stage 7 — 통계
+- `domain/stats.ts` 순수 집계 (자정 걸친 세션은 시작일 귀속, 스트릭 리셋 등 8 테스트)
+- 차트는 정적 SVG — **victory-native(Skia) 미채택 (deviation)**: 정적 렌더에 네이티브 차트 불필요
+
+### Stage 8 — 폴리싱
+- 검색(ilike, 하이라이트, 최근 5), 백업 JSON 왕복(버전 검증+확인 다이얼로그+20MB 캡),
+  .ics(VALUE=DATE, rrule), ErrorBoundary(정적 다크), 햅틱 토글, 생성형 앱 아이콘
+
+### Stage 9 — 위젯
+- config plugin(`withChronaWidget.js`)이 `native/android/` 코틀린·리소스를 prebuild 산출물에 주입 —
+  prebuild 재실행 생존 확인
+- **SharedPreferences 대신 filesDir/widget-data.json** (deviation — JS는 expo-file-system만으로 write,
+  네이티브 저장 모듈 불필요). 갱신 브로드캐스트만 초소형 RN 모듈(ChronaWidget.updateWidgets)
+- 위젯 색상 ↔ JS 토큰 대응: values/chrona_widget_colors.xml (light) / values-night (dark)
+- updatePeriodMillis=0 — 갱신은 rescheduleAll 마지막 단계에서만 (master §6)
+
+### Stage 10 — 웹 + 모노레포
+- `src/domain` → `packages/domain` 이동. **경로 별칭('@/domain/*')을 보존해 앱 소스 수정 0** —
+  Stage 1의 순수성 린트 덕에 이동 무손실 (74 테스트 그대로 green)
+- `web/` Vite+React: 주간 타임그리드(드래그 생성/이동/리사이즈, 30분 스냅), 사이드 편집 패널,
+  단축키, 반복 회차 override 편집. domain + 순수 매퍼(@app-data/mappers)를 별칭으로 공유 — 중복 로직 0
+- 알람은 웹에서 안 울림 + "앱을 열어야 알람 갱신" 안내 (구조적 한계 명시)
+- 토큰 → CSS 변수 (prefers-color-scheme로 라이트/다크)
