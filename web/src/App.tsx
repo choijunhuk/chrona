@@ -1,0 +1,523 @@
+/**
+ * Chrona 웹 (stage-10). 주간 타임그리드가 기본 — 데스크톱 UX 우선.
+ * 알람은 웹에서 울리지 않는다 (구조적 한계 — 안내 문구로 명시).
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import type { EventDraft } from '@app-data/mappers';
+import {
+  addDaysOnly,
+  dDayLabel,
+  daysUntilDue,
+  expandForDisplay,
+  focusStreak,
+  formatKoreanDate,
+  fromDateOnly,
+  plannedVsActual,
+  toDateOnly,
+  todayDateOnly,
+  weekOf,
+  type ChronaEvent,
+  type DateOnly,
+  type DisplayItem,
+} from '@chrona/domain';
+
+import {
+  useCategories,
+  useDeleteEvent,
+  useEvents,
+  useOverrides,
+  useSaveEvent,
+  useSession,
+  useUpsertOverride,
+} from './hooks';
+import { supabase } from './supabase';
+
+const TZ = 'Asia/Seoul';
+const HOUR_H = 48;
+const SNAP_MIN = 30;
+
+type DragState =
+  | { kind: 'create'; day: DateOnly; startMin: number; endMin: number }
+  | { kind: 'move'; item: DisplayItem; day: DateOnly; startMin: number; durMin: number }
+  | { kind: 'resize'; item: DisplayItem; day: DateOnly; startMin: number; endMin: number }
+  | null;
+
+type PanelState =
+  | { mode: 'new'; day: DateOnly; startMin: number; endMin: number }
+  | { mode: 'edit'; item: DisplayItem }
+  | null;
+
+export default function App() {
+  const { data: session, isPending } = useSession();
+  if (isPending) return null;
+  if (!session) return <Auth />;
+  return <Calendar />;
+}
+
+function Auth() {
+  const [email, setEmail] = useState('');
+  const [sent, setSent] = useState(false);
+  const send = async () => {
+    await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin },
+    });
+    setSent(true);
+  };
+  useEffect(() => {
+    // 매직링크 복귀: URL 해시의 토큰은 supabase-js가 detectSessionInUrl로 처리
+    const { data } = supabase.auth.onAuthStateChange(() => window.location.reload());
+    return () => data.subscription.unsubscribe();
+  }, []);
+  return (
+    <div className="auth">
+      <h1>Chrona</h1>
+      {sent ? (
+        <p>메일함에서 로그인 링크를 여세요.</p>
+      ) : (
+        <>
+          <input
+            placeholder="이메일"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void send()}
+          />
+          <button className="btn primary" onClick={() => void send()}>
+            매직링크 보내기
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Calendar() {
+  const today = todayDateOnly(TZ);
+  const [anchor, setAnchor] = useState<DateOnly>(today);
+  const [panel, setPanel] = useState<PanelState>(null);
+  const [drag, setDrag] = useState<DragState>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  const days = useMemo(() => weekOf(anchor), [anchor]);
+  const range = useMemo(
+    () => ({
+      from: fromDateOnly(days[0], TZ),
+      to: new Date(fromDateOnly(days[6], TZ).getTime() + 86400_000 - 1),
+    }),
+    [days]
+  );
+
+  const { data: events } = useEvents(range);
+  const { data: overrides } = useOverrides();
+  const { data: categories } = useCategories();
+  const saveEvent = useSaveEvent();
+  const upsertOverride = useUpsertOverride();
+
+  const items = useMemo(
+    () => expandForDisplay(events ?? [], overrides ?? [], range, TZ),
+    [events, overrides, range]
+  );
+
+  // 주간 통계 요약 (검증 11 — 앱과 같은 domain 함수)
+  const statsLine = useMemo(() => {
+    const occ = items
+      .filter((it) => it.start && it.end && it.event.kind !== 'task')
+      .map((it) => ({ categoryId: it.event.categoryId, start: it.start!, end: it.end }));
+    const daily = plannedVsActual(occ, [], days, TZ);
+    const planned = daily.reduce((a, d) => a + d.plannedMinutes, 0);
+    return `이번 주 계획 ${Math.floor(planned / 60)}시간 ${planned % 60}분`;
+  }, [items, days]);
+
+  // 단축키 (stage-10 §1-4)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      if (e.key === 't') setAnchor(today);
+      if (e.key === 'ArrowLeft') setAnchor((a) => addDaysOnly(a, -7));
+      if (e.key === 'ArrowRight') setAnchor((a) => addDaysOnly(a, 7));
+      if (e.key === 'n')
+        setPanel({ mode: 'new', day: today, startMin: 9 * 60, endMin: 10 * 60 });
+      if (e.key === 'Escape') setPanel(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [today]);
+
+  // ── 드래그 계산 ─────────────────────────────────────
+  const minFromY = (clientY: number): number => {
+    const rect = gridRef.current!.getBoundingClientRect();
+    const y = clientY - rect.top + gridRef.current!.scrollTop - 34; // dayhead 높이 보정
+    const min = Math.round(((y / HOUR_H) * 60) / SNAP_MIN) * SNAP_MIN;
+    return Math.max(0, Math.min(24 * 60, min));
+  };
+
+  const onGridMouseDown = (day: DateOnly, e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.evblock')) return;
+    const startMin = minFromY(e.clientY);
+    setDrag({ kind: 'create', day, startMin, endMin: startMin + SNAP_MIN });
+  };
+
+  const onBlockMouseDown = (item: DisplayItem, day: DateOnly, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!item.start || !item.end) return;
+    const isResize = (e.target as HTMLElement).classList.contains('resize');
+    const sMin = minutesOfDay(item.start);
+    const eMin = sMin + (item.end.getTime() - item.start.getTime()) / 60_000;
+    if (isResize) setDrag({ kind: 'resize', item, day, startMin: sMin, endMin: eMin });
+    else setDrag({ kind: 'move', item, day, startMin: sMin, durMin: eMin - sMin });
+  };
+
+  const onMouseMove = (day: DateOnly, e: React.MouseEvent) => {
+    if (!drag) return;
+    const min = minFromY(e.clientY);
+    if (drag.kind === 'create') setDrag({ ...drag, day: drag.day, endMin: Math.max(drag.startMin + SNAP_MIN, min) });
+    if (drag.kind === 'move') setDrag({ ...drag, day, startMin: Math.min(min, 24 * 60 - drag.durMin) });
+    if (drag.kind === 'resize') setDrag({ ...drag, endMin: Math.max(drag.startMin + SNAP_MIN, min) });
+  };
+
+  const commitDrag = useCallback(() => {
+    if (!drag) return;
+    const d = drag;
+    setDrag(null);
+    if (d.kind === 'create') {
+      setPanel({ mode: 'new', day: d.day, startMin: d.startMin, endMin: d.endMin });
+      return;
+    }
+    const e = d.item.event;
+    const newStart = atMin(d.day, d.kind === 'move' ? d.startMin : d.startMin);
+    const newEnd =
+      d.kind === 'move'
+        ? new Date(newStart.getTime() + d.durMin * 60_000)
+        : atMin(d.day, d.endMin);
+    if (e.rrule && d.item.start) {
+      // 반복 회차 이동 = override (이 일정만)
+      void upsertOverride.mutateAsync({
+        eventId: e.id,
+        originalStart: d.item.start,
+        newStart,
+        newEnd,
+        isCancelled: false,
+      });
+    } else {
+      void saveEvent.mutateAsync({
+        id: e.id,
+        draft: { ...toDraft(e), startsAt: newStart, endsAt: newEnd },
+      });
+    }
+  }, [drag, saveEvent, upsertOverride]);
+
+  useEffect(() => {
+    const up = () => commitDrag();
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, [commitDrag]);
+
+  const nowMin = minutesOfDay(new Date());
+
+  return (
+    <div className="app">
+      <div className="main">
+        <div className="topbar">
+          <h1>{formatKoreanDate(days[0])} 주</h1>
+          <button className="btn" onClick={() => setAnchor(addDaysOnly(anchor, -7))}>‹</button>
+          <button className="btn" onClick={() => setAnchor(today)}>오늘</button>
+          <button className="btn" onClick={() => setAnchor(addDaysOnly(anchor, 7))}>›</button>
+          <span className="hint">n 새 일정 · t 오늘 · ← → 주 이동</span>
+          <div className="spacer" />
+          <span className="hint">{statsLine}</span>
+          <button className="btn" onClick={() => void supabase.auth.signOut().then(() => location.reload())}>
+            로그아웃
+          </button>
+        </div>
+        <div className="notice">
+          ⏰ 알람은 앱에서만 울립니다. 웹에서 바꾼 일정은 앱을 한 번 열어야 알람에 반영됩니다.
+        </div>
+
+        {/* 종일 행 */}
+        <div className="alldayrow">
+          <div />
+          {days.map((d) => (
+            <div key={d}>
+              {items
+                .filter((it) => it.startDate && it.startDate <= d && d <= (it.endDate ?? it.startDate))
+                .slice(0, 3)
+                .map((it, i) => (
+                  <div
+                    key={i}
+                    className="chip"
+                    style={{ borderLeft: `3px solid ${colorOf(it.event, categories ?? [])}` }}
+                    onClick={() => setPanel({ mode: 'edit', item: it })}
+                  >
+                    {it.event.kind === 'task'
+                      ? `${dDayLabel(daysUntilDue(it.event.dueAt ?? new Date(), new Date(), TZ))} ${it.event.title}`
+                      : it.event.title}
+                  </div>
+                ))}
+            </div>
+          ))}
+        </div>
+
+        {/* 주간 그리드 */}
+        <div className="week" ref={gridRef}>
+          <div className="timecol">
+            <div className="dayhead" />
+            {Array.from({ length: 24 }, (_, h) => (
+              <div key={h} className="timecell">{String(h).padStart(2, '0')}:00</div>
+            ))}
+          </div>
+          {days.map((d) => (
+            <div
+              key={d}
+              className="daycol"
+              onMouseDown={(e) => onGridMouseDown(d, e)}
+              onMouseMove={(e) => onMouseMove(d, e)}
+            >
+              <div className={`dayhead${d === today ? ' today' : ''}`}>
+                {'월화수목금토일'[(fromDateOnly(d, TZ).getDay() + 6) % 7]}{' '}
+                <span className="num">{Number(d.slice(8))}</span>
+              </div>
+              {Array.from({ length: 24 }, (_, h) => (
+                <div key={h} className="hourline" />
+              ))}
+
+              {d === today && (
+                <div className="nowline" style={{ top: 34 + (nowMin / 60) * HOUR_H }} />
+              )}
+
+              {items
+                .filter((it) => it.start && toDateOnly(it.start, TZ) === d && it.event.kind !== 'task')
+                .map((it, i) => {
+                  const sMin = minutesOfDay(it.start!);
+                  const eMin = it.end ? sMin + (it.end.getTime() - it.start!.getTime()) / 60_000 : sMin + 60;
+                  const color = colorOf(it.event, categories ?? []);
+                  const dragged =
+                    drag && drag.kind !== 'create' && drag.item.event.id === it.event.id && drag.item.start?.getTime() === it.start?.getTime();
+                  return (
+                    <div
+                      key={`${it.event.id}-${i}`}
+                      className="evblock"
+                      style={{
+                        top: 34 + (sMin / 60) * HOUR_H,
+                        height: Math.max(22, ((eMin - sMin) / 60) * HOUR_H - 2),
+                        background: `color-mix(in srgb, ${color} 18%, var(--surface))`,
+                        borderLeftColor: color,
+                        opacity: dragged ? 0.4 : 1,
+                      }}
+                      onMouseDown={(e) => onBlockMouseDown(it, d, e)}
+                      onDoubleClick={() => setPanel({ mode: 'edit', item: it })}
+                    >
+                      <div className="t">{it.event.title}</div>
+                      <div className="resize" />
+                    </div>
+                  );
+                })}
+
+              {/* 드래그 고스트 */}
+              {drag && ghostFor(drag, d) && (
+                <div className="ghost" style={ghostFor(drag, d)!} />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {panel && (
+        <EditorPanel
+          panel={panel}
+          categories={categories ?? []}
+          onClose={() => setPanel(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ghostFor(drag: NonNullable<DragState>, day: DateOnly): React.CSSProperties | null {
+  if (drag.kind === 'create' && drag.day === day) {
+    return { top: 34 + (drag.startMin / 60) * HOUR_H, height: ((drag.endMin - drag.startMin) / 60) * HOUR_H };
+  }
+  if (drag.kind === 'move' && drag.day === day) {
+    return { top: 34 + (drag.startMin / 60) * HOUR_H, height: (drag.durMin / 60) * HOUR_H };
+  }
+  if (drag.kind === 'resize' && drag.day === day) {
+    return { top: 34 + (drag.startMin / 60) * HOUR_H, height: ((drag.endMin - drag.startMin) / 60) * HOUR_H };
+  }
+  return null;
+}
+
+function EditorPanel({
+  panel,
+  categories,
+  onClose,
+}: {
+  panel: NonNullable<PanelState>;
+  categories: { id: string; name: string; color: string }[];
+  onClose: () => void;
+}) {
+  const saveEvent = useSaveEvent();
+  const deleteEvent = useDeleteEvent();
+  const upsertOverride = useUpsertOverride();
+
+  const editing = panel.mode === 'edit' ? panel.item.event : null;
+  const [title, setTitle] = useState(editing?.title ?? '');
+  const [categoryId, setCategoryId] = useState<string>(editing?.categoryId ?? '');
+  const [startStr, setStartStr] = useState(() =>
+    panel.mode === 'edit'
+      ? toLocalInput(panel.item.start ?? atMin(todayDateOnly(TZ), 9 * 60))
+      : toLocalInput(atMin(panel.day, panel.startMin))
+  );
+  const [endStr, setEndStr] = useState(() =>
+    panel.mode === 'edit'
+      ? toLocalInput(panel.item.end ?? atMin(todayDateOnly(TZ), 10 * 60))
+      : toLocalInput(atMin(panel.day, panel.endMin))
+  );
+
+  const isRecurring = !!editing?.rrule;
+
+  const doSave = async (scope: 'one' | 'all') => {
+    const startsAt = new Date(startStr);
+    const endsAt = new Date(endStr);
+    if (panel.mode === 'edit' && editing) {
+      if (isRecurring && scope === 'one' && panel.item.start) {
+        await upsertOverride.mutateAsync({
+          eventId: editing.id,
+          originalStart: panel.item.start,
+          newStart: startsAt,
+          newEnd: endsAt,
+          isCancelled: false,
+        });
+      } else {
+        await saveEvent.mutateAsync({
+          id: editing.id,
+          draft: { ...toDraft(editing), title: title || editing.title, categoryId: categoryId || null, startsAt, endsAt },
+        });
+      }
+    } else {
+      await saveEvent.mutateAsync({
+        id: null,
+        draft: {
+          ...emptyDraft(),
+          title: title || '(제목 없음)',
+          categoryId: categoryId || null,
+          startsAt,
+          endsAt,
+        },
+      });
+    }
+    onClose();
+  };
+
+  const doDelete = async (scope: 'one' | 'all') => {
+    if (!editing) return;
+    if (isRecurring && scope === 'one' && panel.mode === 'edit' && panel.item.start) {
+      await upsertOverride.mutateAsync({
+        eventId: editing.id,
+        originalStart: panel.item.start,
+        newStart: null,
+        newEnd: null,
+        isCancelled: true,
+      });
+    } else {
+      await deleteEvent.mutateAsync(editing.id);
+    }
+    onClose();
+  };
+
+  return (
+    <div className="panel">
+      <b>{panel.mode === 'new' ? '새 일정' : '일정 편집'}</b>
+      <label>
+        제목
+        <input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+      </label>
+      <label>
+        시작
+        <input type="datetime-local" value={startStr} onChange={(e) => setStartStr(e.target.value)} />
+      </label>
+      <label>
+        종료
+        <input type="datetime-local" value={endStr} onChange={(e) => setEndStr(e.target.value)} />
+      </label>
+      <label>
+        카테고리
+        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+          <option value="">없음</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+      </label>
+      {isRecurring && <div className="notice">반복 일정 — 적용 범위를 선택하세요</div>}
+      <div className="row">
+        {isRecurring ? (
+          <>
+            <button className="btn primary" onClick={() => void doSave('one')}>이 일정만 저장</button>
+            <button className="btn" onClick={() => void doSave('all')}>모든 일정</button>
+          </>
+        ) : (
+          <button className="btn primary" onClick={() => void doSave('all')}>저장</button>
+        )}
+      </div>
+      {panel.mode === 'edit' && (
+        <div className="row">
+          {isRecurring ? (
+            <>
+              <button className="btn" onClick={() => void doDelete('one')}>이 회차 삭제</button>
+              <button className="btn" style={{ color: 'var(--danger)' }} onClick={() => void doDelete('all')}>
+                전체 삭제
+              </button>
+            </>
+          ) : (
+            <button className="btn" style={{ color: 'var(--danger)' }} onClick={() => void doDelete('all')}>
+              삭제
+            </button>
+          )}
+        </div>
+      )}
+      <button className="btn" onClick={onClose}>닫기 (Esc)</button>
+    </div>
+  );
+}
+
+// ── 헬퍼 ────────────────────────────────────────────────
+function minutesOfDay(d: Date): number {
+  return d.getHours() * 60 + d.getMinutes(); // 웹은 브라우저 로컬 = KST 가정 (fixedTimezone 미지원 안내)
+}
+function atMin(day: DateOnly, min: number): Date {
+  const d = fromDateOnly(day, TZ);
+  return new Date(d.getTime() + min * 60_000);
+}
+function toLocalInput(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function colorOf(e: ChronaEvent, categories: { id: string; color: string }[]): string {
+  return e.color ?? categories.find((c) => c.id === e.categoryId)?.color ?? 'var(--accent)';
+}
+function toDraft(e: ChronaEvent): EventDraft {
+  const { id: _id, updatedAt: _u, ...rest } = e;
+  return rest;
+}
+function emptyDraft(): EventDraft {
+  return {
+    kind: 'schedule',
+    title: '',
+    memo: null,
+    categoryId: null,
+    color: null,
+    allDay: false,
+    startsAt: null,
+    endsAt: null,
+    startDate: null,
+    endDate: null,
+    rrule: null,
+    rruleUntil: null,
+    dueAt: null,
+    isDone: false,
+    doneAt: null,
+    semesterId: null,
+    location: null,
+    professor: null,
+  };
+}
