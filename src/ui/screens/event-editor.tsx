@@ -22,6 +22,13 @@ import { useReminders, useSaveReminders } from '@/data/hooks/reminders';
 import { useCategories, useSettings } from '@/data/hooks/settings';
 import type { EventDraft, ReminderDraft } from '@/data/mappers';
 import { applicableTaskSteps } from '@/domain/task';
+import {
+  describeRepeat,
+  fromRRuleString,
+  toRRuleString,
+  type RepeatConfig,
+} from '@/domain/rrule-ui';
+import { useUpsertOverride } from '@/data/hooks/overrides';
 import { asDateOnly, formatTimeLabel, fromDateOnly, isDateOnly, toDateOnly } from '@/domain/time';
 import { Button } from '@/ui/components/button';
 import { ColorDot } from '@/ui/components/color-dot';
@@ -32,11 +39,14 @@ import { palette, radius, spacing, type ThemeColors } from '@/ui/tokens';
 
 const TZ = 'Asia/Seoul';
 
-type PickerTarget = 'startDate' | 'startTime' | 'endDate' | 'endTime' | null;
+type PickerTarget = 'startDate' | 'startTime' | 'endDate' | 'endTime' | 'untilDate' | null;
 
 type FormInitial = {
   kind: 'schedule' | 'task';
   isDone: boolean;
+  repeat: RepeatConfig | 'custom';
+  rruleRaw: string | null;
+  untilDate: Date | null;
   title: string;
   memo: string;
   location: string;
@@ -69,7 +79,7 @@ function offsetLabel(minutes: number): string {
 export function EventEditor() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const params = useLocalSearchParams<{ id: string; date?: string }>();
+  const params = useLocalSearchParams<{ id: string; date?: string; occ?: string }>();
   const isNew = params.id === 'new';
   const existing = useEvent(isNew ? '' : params.id);
   const existingReminders = useReminders(isNew ? null : params.id);
@@ -92,6 +102,9 @@ export function EventEditor() {
       ? {
           kind: e.kind === 'task' ? ('task' as const) : ('schedule' as const),
           isDone: e.isDone,
+          repeat: fromRRuleString(e.rrule),
+          rruleRaw: e.rrule,
+          untilDate: e.rruleUntil,
           title: e.title,
           memo: e.memo ?? '',
           location: e.location ?? '',
@@ -119,6 +132,9 @@ export function EventEditor() {
       : {
           kind: 'schedule' as const,
           isDone: false,
+          repeat: { freq: 'none', weekdays: [], count: null } as RepeatConfig,
+          rruleRaw: null,
+          untilDate: null,
           title: '',
           memo: '',
           location: '',
@@ -139,10 +155,28 @@ export function EventEditor() {
           ],
         };
 
-  return <EventForm key={params.id} id={params.id} isNew={isNew} initial={initial} />;
+  return (
+    <EventForm
+      key={params.id}
+      id={params.id}
+      isNew={isNew}
+      initial={initial}
+      occurrenceStart={typeof params.occ === 'string' && params.occ ? new Date(params.occ) : null}
+    />
+  );
 }
 
-function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial: FormInitial }) {
+function EventForm({
+  id,
+  isNew,
+  initial,
+  occurrenceStart,
+}: {
+  id: string;
+  isNew: boolean;
+  initial: FormInitial;
+  occurrenceStart: Date | null;
+}) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
@@ -163,6 +197,12 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
   const [color, setColor] = useState<string | null>(initial.color);
   const [picker, setPicker] = useState<PickerTarget>(null);
   const [kind, setKind] = useState<'schedule' | 'task'>(initial.kind);
+  const [repeat, setRepeat] = useState<RepeatConfig>(
+    initial.repeat === 'custom' ? { freq: 'none', weekdays: [], count: null } : initial.repeat
+  );
+  const isCustomRule = initial.repeat === 'custom';
+  const [untilDate, setUntilDate] = useState<Date | null>(initial.untilDate);
+  const upsertOverride = useUpsertOverride();
   const [isDone, setIsDone] = useState(initial.isDone);
   const [reminders, setReminders] = useState<ReminderDraft[]>(initial.reminders);
 
@@ -222,8 +262,8 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
       endsAt: allDay ? null : endsAt,
       startDate: allDay ? toDateOnly(startsAt, TZ) : null,
       endDate: allDay ? toDateOnly(endsAt, TZ) : null,
-      rrule: null,
-      rruleUntil: null,
+      rrule: isCustomRule ? initial.rruleRaw : toRRuleString(repeat),
+      rruleUntil: untilDate,
       dueAt: null,
       isDone: false,
       doneAt: null,
@@ -233,18 +273,75 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
     };
   };
 
+  const afterSave = () => {
+    haptics.success();
+    router.back();
+  };
+  const onSaveError = (e: unknown) => {
+    // 실패를 절대 조용히 삼키지 않는다 (오프라인 토스트는 assertOnline이 별도 표출)
+    console.warn('[chrona] save failed:', e);
+    if (String(e) !== 'Error: offline') {
+      ToastAndroid.show(`저장 실패: ${String(e)}`, ToastAndroid.LONG);
+    }
+  };
+
+  const applySave = async (scope: 'one' | 'future' | 'all') => {
+    const draft = buildDraft();
+    if (scope === 'one' && occurrenceStart) {
+      // 이 일정만: override 추가 — 시각 변경만 반영 (stage-5 §1-2 규칙)
+      const durationMs = endsAt.getTime() - startsAt.getTime();
+      await upsertOverride.mutateAsync({
+        eventId: id,
+        originalStart: occurrenceStart,
+        newStart: startsAt,
+        newEnd: new Date(startsAt.getTime() + durationMs),
+        isCancelled: false,
+      });
+      return;
+    }
+    if (scope === 'future' && occurrenceStart) {
+      // 이후 모든: 원본 rrule_until을 직전 회차로 자르고 새 event 생성 + reminders 복사
+      await updateMutation.mutateAsync({
+        id,
+        draft: {
+          ...draft,
+          startsAt: initial.startsAt,
+          endsAt: initial.endsAt,
+          rruleUntil: new Date(occurrenceStart.getTime() - 60_000),
+        },
+      });
+      const created = await createMutation.mutateAsync(draft);
+      await saveReminders.mutateAsync({ eventId: created.id, drafts: reminders });
+      return;
+    }
+    // 모든 일정 (또는 비반복)
+    await updateMutation.mutateAsync({ id, draft });
+    await saveReminders.mutateAsync({ eventId: id, drafts: reminders });
+  };
+
   const save = async () => {
     try {
-      let eventId = id;
       if (isNew) {
         const created = await createMutation.mutateAsync(buildDraft());
-        eventId = created.id;
-      } else {
-        await updateMutation.mutateAsync({ id, draft: buildDraft() });
+        await saveReminders.mutateAsync({ eventId: created.id, drafts: reminders });
+        haptics.success();
+        router.back();
+        return;
       }
-      await saveReminders.mutateAsync({ eventId, drafts: reminders });
-      haptics.success();
-      router.back();
+      const isRecurring = !!(isCustomRule ? initial.rruleRaw : toRRuleString(repeat));
+      if (isRecurring && occurrenceStart) {
+        Alert.alert('반복 일정 수정', '어떤 범위에 적용할까요?', [
+          { text: '이 일정만', onPress: () => void applySave('one').then(afterSave, onSaveError) },
+          {
+            text: '이후 모든 일정',
+            onPress: () => void applySave('future').then(afterSave, onSaveError),
+          },
+          { text: '모든 일정', onPress: () => void applySave('all').then(afterSave, onSaveError) },
+        ]);
+        return;
+      }
+      await applySave('all');
+      afterSave();
     } catch (e) {
       // 실패를 절대 조용히 삼키지 않는다 (오프라인 토스트는 assertOnline이 별도 표출)
       console.warn('[chrona] save failed:', e);
@@ -255,20 +352,51 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
   };
 
   const remove = () => {
+    const isRecurring = !!(isCustomRule ? initial.rruleRaw : toRRuleString(repeat));
+    if (isRecurring && occurrenceStart) {
+      Alert.alert('반복 일정 삭제', '어떤 범위를 삭제할까요?', [
+        {
+          text: '이 일정만',
+          onPress: () =>
+            void upsertOverride
+              .mutateAsync({
+                eventId: id,
+                originalStart: occurrenceStart,
+                newStart: null,
+                newEnd: null,
+                isCancelled: true, // 휴강 (검증 4·5)
+              })
+              .then(afterSave, onSaveError),
+        },
+        {
+          text: '이후 모든 일정',
+          onPress: () =>
+            void updateMutation
+              .mutateAsync({
+                id,
+                draft: {
+                  ...buildDraft(),
+                  startsAt: initial.startsAt,
+                  endsAt: initial.endsAt,
+                  rruleUntil: new Date(occurrenceStart.getTime() - 60_000),
+                },
+              })
+              .then(afterSave, onSaveError),
+        },
+        {
+          text: '모든 일정 삭제',
+          style: 'destructive',
+          onPress: () => void deleteMutation.mutateAsync(id).then(afterSave, onSaveError),
+        },
+      ]);
+      return;
+    }
     Alert.alert('일정 삭제', '이 일정을 삭제할까요?', [
       { text: '취소', style: 'cancel' },
       {
         text: '삭제',
         style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteMutation.mutateAsync(id);
-            haptics.impact();
-            router.back();
-          } catch {
-            /* 오프라인 안내는 가드가 처리 */
-          }
-        },
+        onPress: () => void deleteMutation.mutateAsync(id).then(afterSave, onSaveError),
       },
     ]);
   };
@@ -287,6 +415,7 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
     if (target === 'startTime') setStartsAt((p) => apply(p, 'time'));
     if (target === 'endDate') setEndsAt((p) => apply(p, 'date'));
     if (target === 'endTime') setEndsAt((p) => apply(p, 'time'));
+    if (target === 'untilDate') setUntilDate(apply(startsAt, 'date'));
   };
 
   const saving = createMutation.isPending || updateMutation.isPending;
@@ -375,6 +504,78 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
           )}
         </View>
       </View>
+      )}
+
+      {/* 반복 (stage-5 §1-4) — 일정만 */}
+      {kind === 'schedule' && (
+        <>
+          <AppText variant="caption" color="textSub">
+            반복 {isCustomRule ? '(사용자 지정 규칙 — 수정 시 대체됨)' : ''}
+          </AppText>
+          <View style={styles.chipRow}>
+            {(
+              [
+                ['none', '안 함'],
+                ['daily', '매일'],
+                ['weekly', '매주'],
+                ['biweekly', '격주'],
+                ['monthly', '매월'],
+              ] as const
+            ).map(([f, label]) => (
+              <Pressable
+                key={f}
+                style={[styles.chip, repeat.freq === f && styles.chipActive]}
+                onPress={() =>
+                  setRepeat((r) => ({
+                    freq: f,
+                    weekdays:
+                      f === 'weekly' || f === 'biweekly'
+                        ? r.weekdays.length
+                          ? r.weekdays
+                          : [(startsAt.getDay() + 0) % 7]
+                        : [],
+                    count: r.count,
+                  }))
+                }
+              >
+                <AppText variant="caption">{label}</AppText>
+              </Pressable>
+            ))}
+          </View>
+          {(repeat.freq === 'weekly' || repeat.freq === 'biweekly') && (
+            <View style={styles.chipRow}>
+              {['일', '월', '화', '수', '목', '금', '토'].map((w, i) => (
+                <Pressable
+                  key={i}
+                  style={[styles.chip, repeat.weekdays.includes(i) && styles.chipActive]}
+                  onPress={() =>
+                    setRepeat((r) => ({
+                      ...r,
+                      weekdays: r.weekdays.includes(i)
+                        ? r.weekdays.filter((x) => x !== i)
+                        : [...r.weekdays, i],
+                    }))
+                  }
+                >
+                  <AppText variant="caption">{w}</AppText>
+                </Pressable>
+              ))}
+            </View>
+          )}
+          {repeat.freq !== 'none' && (
+            <View style={styles.rowBetween}>
+              <AppText variant="caption" color="textSub">
+                {describeRepeat(repeat)}
+                {untilDate ? ` · ${toDateOnly(untilDate, TZ)}까지` : ''}
+              </AppText>
+              <Pressable onPress={() => setPicker('untilDate')}>
+                <AppText variant="caption" color="accent">
+                  {untilDate ? '종료일 변경' : '종료일 지정'}
+                </AppText>
+              </Pressable>
+            </View>
+          )}
+        </>
       )}
 
       {/* 알림 (stage-3 §1-5) */}
@@ -496,8 +697,8 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
 
       {picker && (
         <DateTimePicker
-          value={picker.startsWith('start') ? startsAt : endsAt}
-          mode={picker.endsWith('Date') ? 'date' : 'time'}
+          value={picker === 'untilDate' ? (untilDate ?? endsAt) : picker.startsWith('start') ? startsAt : endsAt}
+          mode={picker.endsWith('Date') || picker === 'untilDate' ? 'date' : 'time'}
           onChange={onPickerChange}
         />
       )}

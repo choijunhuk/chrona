@@ -18,6 +18,8 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useEvents } from '@/data/hooks/events';
+import { useOverrides } from '@/data/hooks/overrides';
+import { expandForDisplay } from '@/domain/display';
 import { usePermissionStore } from '@/native/permissions';
 import { useCategories } from '@/data/hooks/settings';
 import {
@@ -84,33 +86,40 @@ export function CalendarScreen() {
     return { from, to, tz: TZ };
   }, [prevGrid, nextGrid]);
   const { data: events, isPending } = useEvents(range);
+  const { data: overrides } = useOverrides();
   const { data: categories } = useCategories();
+
+  // 반복 전개 (표시 범위 한정 — stage-5 §1-5). useMemo로 재전개 방지
+  const displayItems = useMemo(
+    () => expandForDisplay(events ?? [], overrides ?? [], range, TZ),
+    [events, overrides, range]
+  );
 
   // 모든 일정을 제목 실린 필로 — 단일/연속 동일 시스템 (디자인 시그니처)
   const spans = useMemo(() => {
     const catColor = new Map((categories ?? []).map((c) => [c.id, c.color]));
     const list: { from: DateOnly; to: DateOnly; color: string; title: string }[] = [];
-    for (const e of events ?? []) {
+    for (const it of displayItems) {
+      const e = it.event;
       const color =
         e.color ?? (e.categoryId ? (catColor.get(e.categoryId) ?? colors.accent) : colors.accent);
       let from: DateOnly | null = null;
       let to: DateOnly | null = null;
-      if (e.allDay && e.startDate) {
-        from = e.startDate;
-        to = e.endDate ?? e.startDate;
-      } else if (e.startsAt) {
-        from = toDateOnly(e.startsAt, TZ);
-        to = toDateOnly(e.endsAt ?? e.startsAt, TZ);
-      } else if (e.dueAt) {
-        from = to = toDateOnly(e.dueAt, TZ);
+      if (it.startDate) {
+        from = it.startDate;
+        to = it.endDate ?? it.startDate;
+      } else if (it.start) {
+        from = toDateOnly(it.start, TZ);
+        to = toDateOnly(it.end ?? it.start, TZ);
       }
       if (!from || !to) continue;
-      list.push({ from, to, color, title: e.title });
+      const title = e.kind === 'task' ? `📌 ${e.title}` : e.title;
+      list.push({ from, to, color, title });
     }
     // 연속 일정 먼저(레인 안정), 그다음 시작일 순
     list.sort((a, b) => (a.from === b.from ? (a.to < b.to ? 1 : -1) : a.from < b.from ? -1 : 1));
     return list;
-  }, [events, categories, colors.accent]);
+  }, [displayItems, categories, colors.accent]);
 
   const layoutWeeks = (grid: MonthGridCell[][]): { bars: WeekBar[][]; overflow: OverflowMap } => {
     const overflow: OverflowMap = {};
@@ -358,11 +367,13 @@ export function CalendarScreen() {
 
       <DaySheet
         date={selectedDate}
-        events={events ?? []}
+        items={displayItems}
         categories={categories ?? []}
         loading={isPending}
         tz={TZ}
-        onPressEvent={(id) => router.push({ pathname: '/event/[id]', params: { id } })}
+        onPressEvent={(id, occ) =>
+          router.push({ pathname: '/event/[id]', params: occ ? { id, occ } : { id } })
+        }
         onPressAdd={() =>
           router.push({ pathname: '/event/[id]', params: { id: 'new', date: selectedDate } })
         }

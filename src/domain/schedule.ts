@@ -6,6 +6,7 @@
  * - task: due_at. (미래: 날짜만 있으면 23:59)
  */
 import type { AlarmPayload } from './alarm-payload';
+import { applyOverrides, expandRule } from './recurrence';
 import { fromDateOnly, formatTimeLabel } from './time';
 import type { ChronaEvent, EventOverride, Reminder, StandaloneAlarm } from './types';
 
@@ -27,8 +28,8 @@ export type PlannedAlarm = {
 };
 
 /**
- * 반복 전개 (Stage 5에서 rrule 연결 — 지금은 단일 일정 pass-through).
- * override 반영: is_cancelled 회차 제외, 시각 변경 회차 교체 (master §3.7).
+ * 반복 전개 (stage-5: rrule 연결 완료) + override 병합 (master §3.7).
+ * 전개는 항상 range로 유한하게 제한된다.
  */
 export function expandOccurrences(
   events: ChronaEvent[],
@@ -36,47 +37,54 @@ export function expandOccurrences(
   overrides: EventOverride[],
   tz: string
 ): Occurrence[] {
-  const byEvent = new Map<string, EventOverride[]>();
-  for (const o of overrides) {
-    byEvent.set(o.eventId, [...(byEvent.get(o.eventId) ?? []), o]);
-  }
+  const raw: Occurrence[] = [];
 
-  const out: Occurrence[] = [];
   for (const e of events) {
-    let start: Date | null = null;
-    let end: Date | null = null;
-
     if (e.kind === 'task') {
-      // task는 due_at 기준
-      start = e.dueAt;
-      end = null;
-      if (e.isDone) continue; // 완료된 과제는 알람 없음
-    } else if (e.allDay && e.startDate) {
-      // 종일: 해당 날짜 09:00 로컬 (§1-2)
-      const base = fromDateOnly(e.startDate, tz);
-      start = new Date(base.getTime() + ALL_DAY_BASE_HOUR * 3600_000);
-      end = null;
-    } else {
-      start = e.startsAt;
-      end = e.endsAt;
+      if (e.isDone || !e.dueAt) continue; // 완료된 과제는 알람 없음
+      if (e.dueAt.getTime() < range.from.getTime() || e.dueAt.getTime() > range.to.getTime())
+        continue;
+      raw.push({ eventId: e.id, title: e.title, colorHex: e.color, start: e.dueAt, end: null });
+      continue;
     }
-    if (!start) continue;
 
-    // 단일 일정의 override: original_start가 원래 시각과 일치하는 것 적용
-    const ovs = byEvent.get(e.id) ?? [];
-    const ov = ovs.find((o) => o.originalStart.getTime() === start!.getTime());
-    if (ov) {
-      if (ov.isCancelled) continue;
-      if (ov.newStart) {
-        start = ov.newStart;
-        end = ov.newEnd;
+    // 기준 시각: 종일=해당 날짜 09:00 로컬(§1-2), 시각 일정=starts_at
+    const durationMs = e.startsAt && e.endsAt ? e.endsAt.getTime() - e.startsAt.getTime() : null;
+    const baseStart =
+      e.allDay && e.startDate
+        ? new Date(fromDateOnly(e.startDate, tz).getTime() + ALL_DAY_BASE_HOUR * 3600_000)
+        : e.startsAt;
+    if (!baseStart) continue;
+
+    if (e.rrule) {
+      // 반복: rrule 전개 (dtstart 이전은 안 나오므로 range와 교차만 전개됨)
+      const starts = expandRule(e.rrule, baseStart, e.rruleUntil, range, tz);
+      for (const start of starts) {
+        raw.push({
+          eventId: e.id,
+          title: e.title,
+          colorHex: e.color,
+          start,
+          end: durationMs !== null ? new Date(start.getTime() + durationMs) : null,
+        });
       }
+    } else {
+      if (
+        baseStart.getTime() < range.from.getTime() ||
+        baseStart.getTime() > range.to.getTime()
+      )
+        continue;
+      raw.push({
+        eventId: e.id,
+        title: e.title,
+        colorHex: e.color,
+        start: baseStart,
+        end: e.allDay ? null : e.endsAt,
+      });
     }
-
-    if (start.getTime() < range.from.getTime() || start.getTime() > range.to.getTime()) continue;
-    out.push({ eventId: e.id, title: e.title, colorHex: e.color, start, end });
   }
-  return out;
+
+  return applyOverrides(raw, overrides, range);
 }
 
 /** 순수 알람(standalone)의 발화 시각들을 [now, until] 구간에서 전개 */

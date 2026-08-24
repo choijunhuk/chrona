@@ -9,6 +9,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useEvents } from '@/data/hooks/events';
+import { useOverrides } from '@/data/hooks/overrides';
+import { expandForDisplay } from '@/domain/display';
 import { useCategories } from '@/data/hooks/settings';
 import { useTasks, useToggleTaskDone } from '@/data/hooks/tasks';
 import { formatKoreanDate } from '@/domain/calendar';
@@ -57,23 +59,24 @@ export function HomeScreen() {
   }, [hourBucket]);
 
   const { data: events } = useEvents(range);
+  const { data: overrides } = useOverrides();
   const { data: tasks } = useTasks();
   const { data: categories } = useCategories();
   const toggleDone = useToggleTaskDone();
 
-  const todayTimed = useMemo(
-    () =>
-      (events ?? [])
-        .filter(
-          (e) =>
-            e.kind !== 'task' &&
-            e.startsAt &&
-            toDateOnly(e.startsAt, TZ) === today &&
-            e.startsAt.getTime() > now.getTime()
-        )
-        .sort((a, b) => a.startsAt!.getTime() - b.startsAt!.getTime()),
-    [events, today, now]
-  );
+  const todayTimed = useMemo(() => {
+    const items = expandForDisplay(events ?? [], overrides ?? [], range, TZ);
+    return items
+      .filter(
+        (it) =>
+          it.event.kind !== 'task' &&
+          it.start &&
+          toDateOnly(it.start, TZ) === today &&
+          it.start.getTime() > now.getTime()
+      )
+      .map((it) => ({ ...it.event, startsAt: it.start, endsAt: it.end }))
+      .sort((a, b) => a.startsAt!.getTime() - b.startsAt!.getTime());
+  }, [events, overrides, range, today, now]);
   const nextEvent = todayTimed[0] ?? null;
 
   const openTasks = useMemo(
