@@ -15,6 +15,7 @@ import { readRescheduleSource, refreshRescheduleSource } from '@/data/reschedule
 import {
   cancelAllTriggers,
   cancelOngoing,
+  isAlarmRinging,
   scheduleAlarm,
   scheduleMidnightAnchor,
   scheduleReminder,
@@ -32,6 +33,13 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** 실제 재계산 본체 */
 async function run(refresh: boolean): Promise<RescheduleResult> {
+  // 알람이 울리는 중이면 재계산을 미룬다 — 해제/스누즈 흐름과 충돌 방지
+  if (await isAlarmRinging()) {
+    console.log('[chrona] reschedule deferred: alarm ringing');
+    setTimeout(() => void rescheduleAll({ refresh }), 30_000);
+    return { scheduled: -1, nextAt: null, source: 'none' };
+  }
+
   // 온라인이면 스냅샷 갱신 시도, 실패/오프라인이면 기존 스냅샷
   let source = refresh ? await refreshRescheduleSource() : null;
   let origin: RescheduleResult['source'] = source ? 'fresh' : 'snapshot';

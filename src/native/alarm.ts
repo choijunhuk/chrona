@@ -158,9 +158,28 @@ export async function cancelAll(): Promise<void> {
   await notifee.cancelAllNotifications();
 }
 
-/** 예약(트리거)만 전체 취소 — 재계산 엔진 전용 (표시 중 알림은 유지) */
+/**
+ * 예약(트리거)만 전체 취소 — 재계산 엔진 전용.
+ * ⚠ 인자 없는 cancelTriggerNotifications()는 방금 발화해 표시 중인 알람 알림까지
+ * 제거한다 (실기기에서 알람이 울리자마자 사라지는 버그의 원인). 반드시
+ * pending id 목록을 뽑아 표시 중인 것을 제외하고 취소한다.
+ */
 export async function cancelAllTriggers(): Promise<void> {
-  await notifee.cancelTriggerNotifications();
+  const [pendingIds, displayed] = await Promise.all([
+    notifee.getTriggerNotificationIds(),
+    notifee.getDisplayedNotifications(),
+  ]);
+  const displayedIds = new Set(displayed.map((d) => d.id));
+  const toCancel = pendingIds.filter((id) => !displayedIds.has(id));
+  if (toCancel.length > 0) {
+    await notifee.cancelTriggerNotifications(toCancel);
+  }
+}
+
+/** 알람(②)이 지금 울리는 중인지 — 재계산 지연 판단용 */
+export async function isAlarmRinging(): Promise<boolean> {
+  const displayed = await notifee.getDisplayedNotifications();
+  return displayed.some((n) => n.notification.android?.channelId === CHANNELS.alarm);
 }
 
 export type ScheduledAlarm = {
