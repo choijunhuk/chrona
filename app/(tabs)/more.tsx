@@ -1,10 +1,15 @@
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Switch, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import Constants from 'expo-constants';
+import { ToastAndroid } from 'react-native';
+
 import { signOut } from '@/data/auth';
+import { exportBackup, exportIcs, importBackup } from '@/data/backup';
+import { hapticsEnabled, setHapticsEnabled } from '@/ui/components/haptics';
 import { useSettings, useUpdateSettings } from '@/data/hooks/settings';
 import { AppText } from '@/ui/components/text';
 import { haptics } from '@/ui/components/haptics';
@@ -14,6 +19,7 @@ import { radius, spacing, type ThemeColors } from '@/ui/tokens';
 // Stage 2: 테마/디버그/로그아웃만. 통계·브리핑·권한·백업은 해당 스테이지에서 (master §8)
 export default function More() {
   const [pickingBriefing, setPickingBriefing] = useState(false);
+  const [hapticsOn, setHapticsOn] = useState(hapticsEnabled());
   const { colors, mode, setMode } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
@@ -34,7 +40,10 @@ export default function More() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + spacing.xl }]}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.xl }]}
+    >
       <AppText variant="display" style={styles.heading}>
         더보기
       </AppText>
@@ -43,6 +52,19 @@ export default function More() {
         화면
       </AppText>
       <View style={styles.card}>
+        <View style={styles.row}>
+          <AppText>햅틱</AppText>
+          <Switch
+            value={hapticsOn}
+            onValueChange={(v) => {
+              setHapticsOn(v);
+              setHapticsEnabled(v);
+            }}
+            trackColor={{ true: colors.accent, false: colors.border }}
+            thumbColor={colors.white}
+          />
+        </View>
+        <View style={styles.divider} />
         <View style={styles.row}>
           <AppText>다크 모드</AppText>
           <Switch
@@ -60,6 +82,40 @@ export default function More() {
       <View style={styles.card}>
         <Pressable style={styles.row} onPress={() => router.push('/stats')}>
           <AppText>통계</AppText>
+          <AppText color="textDim">›</AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable
+          style={styles.row}
+          onPress={() =>
+            void exportBackup().catch((e) => ToastAndroid.show(String(e), ToastAndroid.LONG))
+          }
+        >
+          <AppText>백업 내보내기 (JSON)</AppText>
+          <AppText color="textDim">›</AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable
+          style={styles.row}
+          onPress={() =>
+            void importBackup()
+              .then((r) => {
+                if (r) ToastAndroid.show(`${r.restored}건 복원됨`, ToastAndroid.LONG);
+              })
+              .catch((e) => ToastAndroid.show(String(e), ToastAndroid.LONG))
+          }
+        >
+          <AppText>백업 가져오기</AppText>
+          <AppText color="textDim">›</AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable
+          style={styles.row}
+          onPress={() =>
+            void exportIcs().catch((e) => ToastAndroid.show(String(e), ToastAndroid.LONG))
+          }
+        >
+          <AppText>캘린더 내보내기 (.ics)</AppText>
           <AppText color="textDim">›</AppText>
         </Pressable>
       </View>
@@ -153,13 +209,17 @@ export default function More() {
           <AppText color="danger">로그아웃</AppText>
         </Pressable>
       </View>
-    </View>
+      <AppText variant="micro" color="textDim" style={styles.version} nums>
+        Chrona {Constants.expoConfig?.version ?? '?'}
+      </AppText>
+    </ScrollView>
   );
 }
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.xl },
+    container: { flex: 1, backgroundColor: colors.bg },
+    scroll: { paddingHorizontal: spacing.xl, paddingBottom: spacing.x40 },
     heading: { marginBottom: spacing.xxl },
     sectionLabel: { letterSpacing: 2, marginBottom: spacing.sm, marginLeft: spacing.xs },
     card: {
@@ -170,6 +230,7 @@ const createStyles = (colors: ThemeColors) =>
     },
     logoutCard: { marginTop: spacing.x32 },
     divider: { height: 1, backgroundColor: colors.border, marginHorizontal: spacing.lg },
+    version: { textAlign: 'center', marginTop: spacing.sm },
     row: {
       flexDirection: 'row',
       justifyContent: 'space-between',

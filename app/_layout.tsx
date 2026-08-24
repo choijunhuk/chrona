@@ -2,8 +2,8 @@ import { useFonts } from 'expo-font';
 import * as Linking from 'expo-linking';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import { AppState, StyleSheet } from 'react-native';
+import { Component, useEffect, type ReactNode } from 'react';
+import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { handleAuthDeepLink, useSession } from '@/data/auth';
@@ -114,6 +114,28 @@ function Root() {
   );
 }
 
+/** 화면 크래시 시 흰 화면 대신 복구 UI (stage-8 §6). 토큰 밖 정적 색 — 테마 훅도 죽었을 수 있음 */
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={styles.crash}>
+          <Text style={styles.crashTitle}>문제가 생겼어요</Text>
+          <Text style={styles.crashBody}>{String(this.state.error)}</Text>
+          <Pressable style={styles.crashBtn} onPress={() => this.setState({ error: null })}>
+            <Text style={styles.crashBtnText}>다시 시도</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     Pretendard: require('../assets/fonts/PretendardVariable.ttf'),
@@ -127,13 +149,21 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.root}>
-      <QueryProvider>
-        <Root />
-      </QueryProvider>
+      <ErrorBoundary>
+        <QueryProvider>
+          <Root />
+        </QueryProvider>
+      </ErrorBoundary>
     </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  // eslint-disable-next-line no-restricted-syntax -- ErrorBoundary는 테마 시스템 밖에서도 동작해야 함
+  crash: { flex: 1, backgroundColor: '#0E0F13', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
+  crashTitle: { color: '#EDEFF5', fontSize: 20, fontWeight: '600' },
+  crashBody: { color: '#9BA1B0', fontSize: 13, textAlign: 'center' },
+  crashBtn: { backgroundColor: '#6C7BFF', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginTop: 12 },
+  crashBtnText: { color: '#FFFFFF', fontWeight: '600' },
 });

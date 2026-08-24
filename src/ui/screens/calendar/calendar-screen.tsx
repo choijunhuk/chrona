@@ -302,11 +302,18 @@ export function CalendarScreen() {
             {center.month}월
           </AppText>
         </View>
-        <Pressable onPress={goToday} hitSlop={8}>
-          <AppText variant="caption" color="accent">
-            오늘
-          </AppText>
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable onPress={() => router.push('/search')} hitSlop={8}>
+            <AppText variant="caption" color="textSub">
+              검색
+            </AppText>
+          </Pressable>
+          <Pressable onPress={goToday} hitSlop={8}>
+            <AppText variant="caption" color="accent">
+              오늘
+            </AppText>
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.weekdays}>
@@ -401,6 +408,7 @@ const createStyles = (colors: ThemeColors) =>
       paddingBottom: spacing.lg,
     },
     yearLabel: { letterSpacing: 2 },
+    headerActions: { flexDirection: 'row', gap: spacing.xl, alignItems: 'center' },
     monthLabel: { lineHeight: 38 },
     weekdays: {
       flexDirection: 'row',
