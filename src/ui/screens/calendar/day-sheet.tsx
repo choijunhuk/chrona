@@ -7,6 +7,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
+import { formatKoreanDate } from '@/domain/calendar';
 import type { Category, ChronaEvent } from '@/domain/types';
 import { formatTimeLabel, type DateOnly, toDateOnly } from '@/domain/time';
 import { ColorDot } from '@/ui/components/color-dot';
@@ -93,8 +94,8 @@ export function DaySheet({ date, events, categories, loading, tz, onPressEvent, 
       handleIndicatorStyle={styles.handle}
     >
       <View style={styles.sheetHeader}>
-        <AppText variant="caption" color="textSub" nums>
-          {date}
+        <AppText variant="title" nums style={styles.dateTitle}>
+          {formatKoreanDate(date)}
         </AppText>
         <Pressable onPress={onPressAdd} style={styles.addBtn}>
           <AppText variant="caption" color="accent">
@@ -164,9 +165,18 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingBottom: spacing.sm,
   },
   addBtn: { paddingVertical: spacing.xs, paddingHorizontal: spacing.sm },
-  item: { flexDirection: 'row', paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, gap: spacing.md },
-  colorBar: { width: 3, borderRadius: radius.full },
-  itemBody: { gap: 2 },
+  item: {
+    flexDirection: 'row',
+    marginHorizontal: spacing.lg,
+    marginVertical: spacing.xs,
+    padding: spacing.md,
+    gap: spacing.md,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+  },
+  colorBar: { width: 4, borderRadius: radius.full },
+  itemBody: { gap: 2, flex: 1 },
+  dateTitle: { fontSize: 17 },
   done: { textDecorationLine: 'line-through', color: colors.textDim },
   allDayRow: {
     flexDirection: 'row',

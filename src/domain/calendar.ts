@@ -79,4 +79,11 @@ export function dayOfMonth(date: DateOnly): number {
   return Number(date.slice(8, 10));
 }
 
+/** '8월 24일 (월)' — 사람이 읽는 날짜 라벨 */
+export function formatKoreanDate(date: DateOnly): string {
+  const d = toLocalDate(date);
+  const weekdayIdx = (d.getDay() + 6) % 7; // Mon=0
+  return `${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEKDAY_LABELS[weekdayIdx]})`;
+}
+
 export { asDateOnly };

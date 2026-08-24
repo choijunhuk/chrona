@@ -36,7 +36,7 @@ import { useTheme } from '@/ui/theme';
 import { spacing, springSnap, type ThemeColors } from '@/ui/tokens';
 
 import { DaySheet } from './day-sheet';
-import { MonthPage, MAX_LANES, type DayDots, type WeekBar } from './month-page';
+import { MonthPage, MAX_LANES, type OverflowMap, type WeekBar } from './month-page';
 
 const TZ = 'Asia/Seoul';
 
@@ -85,12 +85,10 @@ export function CalendarScreen() {
   const { data: events, isPending } = useEvents(range);
   const { data: categories } = useCategories();
 
-  // 단일 일정 → 점, 여러 날 걸침 → 연속 바 (사용자 요청: 이어지는 느낌)
-  const { dots, spans } = useMemo(() => {
+  // 모든 일정을 제목 실린 필로 — 단일/연속 동일 시스템 (디자인 시그니처)
+  const spans = useMemo(() => {
     const catColor = new Map((categories ?? []).map((c) => [c.id, c.color]));
-    const dotMap: DayDots = {};
-    const spanList: { from: DateOnly; to: DateOnly; color: string }[] = [];
-    const push = (d: string, color: string) => (dotMap[d] = [...(dotMap[d] ?? []), color]);
+    const list: { from: DateOnly; to: DateOnly; color: string; title: string }[] = [];
     for (const e of events ?? []) {
       const color =
         e.color ?? (e.categoryId ? (catColor.get(e.categoryId) ?? colors.accent) : colors.accent);
@@ -106,26 +104,34 @@ export function CalendarScreen() {
         from = to = toDateOnly(e.dueAt, TZ);
       }
       if (!from || !to) continue;
-      if (from === to) push(from, color);
-      else spanList.push({ from, to, color });
+      list.push({ from, to, color, title: e.title });
     }
-    return { dots: dotMap, spans: spanList };
+    // 연속 일정 먼저(레인 안정), 그다음 시작일 순
+    list.sort((a, b) => (a.from === b.from ? (a.to < b.to ? 1 : -1) : a.from < b.from ? -1 : 1));
+    return list;
   }, [events, categories, colors.accent]);
 
-  const barsFor = (grid: MonthGridCell[][]): WeekBar[][] =>
-    grid.map((week) => {
+  const layoutWeeks = (grid: MonthGridCell[][]): { bars: WeekBar[][]; overflow: OverflowMap } => {
+    const overflow: OverflowMap = {};
+    const bars = grid.map((week) => {
       const rowBars: WeekBar[] = [];
       const weekStart = week[0].date;
       const weekEnd = week[6].date;
-      const candidates = spans
+      const segs = spans
         .filter((sp) => sp.from <= weekEnd && sp.to >= weekStart)
         .map((sp) => {
-          const startCol = week.findIndex((c) => c.date >= sp.from);
+          const startCol = Math.max(0, week.findIndex((c) => c.date >= sp.from));
           const endIdx = [...week].reverse().findIndex((c) => c.date <= sp.to);
-          return { startCol: Math.max(0, startCol), endCol: 6 - Math.max(0, endIdx), color: sp.color };
+          return {
+            startCol,
+            endCol: 6 - Math.max(0, endIdx),
+            color: sp.color,
+            // 제목은 세그먼트 시작에서만 (이어지는 주는 바만)
+            title: sp.from >= weekStart ? sp.title : sp.title,
+          };
         })
-        .sort((a, b) => a.startCol - b.startCol);
-      for (const c of candidates) {
+        .sort((a, b) => a.startCol - b.startCol || b.endCol - a.endCol);
+      for (const c of segs) {
         let lane = 0;
         while (
           lane < MAX_LANES &&
@@ -133,19 +139,29 @@ export function CalendarScreen() {
         ) {
           lane++;
         }
-        if (lane >= MAX_LANES) continue; // 초과분은 생략 (레인 2개까지)
+        if (lane >= MAX_LANES) {
+          for (let col = c.startCol; col <= c.endCol; col++) {
+            const d = week[col].date;
+            overflow[d] = (overflow[d] ?? 0) + 1;
+          }
+          continue;
+        }
         rowBars.push({ ...c, lane });
       }
       return rowBars;
     });
+    return { bars, overflow };
+  };
 
-  const centerBars = useMemo(() => barsFor(centerGrid), [centerGrid, spans]); // eslint-disable-line react-hooks/exhaustive-deps
-  const prevBars = useMemo(() => barsFor(isWeekModeRef() ? prevWeekGrid : prevGrid), [prevWeekGrid, prevGrid, spans, mode]); // eslint-disable-line react-hooks/exhaustive-deps
-  const nextBars = useMemo(() => barsFor(isWeekModeRef() ? nextWeekGrid : nextGrid), [nextWeekGrid, nextGrid, spans, mode]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function isWeekModeRef() {
-    return mode === 'week';
-  }
+  const centerLayout = useMemo(() => layoutWeeks(centerGrid), [centerGrid, spans]); // eslint-disable-line react-hooks/exhaustive-deps
+  const prevLayout = useMemo(
+    () => layoutWeeks(mode === 'week' ? prevWeekGrid : prevGrid),
+    [prevWeekGrid, prevGrid, spans, mode] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const nextLayout = useMemo(
+    () => layoutWeeks(mode === 'week' ? nextWeekGrid : nextGrid),
+    [nextWeekGrid, nextGrid, spans, mode] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   // ── 애니메이션 상태 ──────────────────────────────────
   const progress = useSharedValue(0);
@@ -256,16 +272,19 @@ export function CalendarScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.sm }]}>
       <View style={styles.header}>
-        <AppText variant="title" nums>
-          {center.year}년 {center.month}월
-        </AppText>
-        <View style={styles.headerActions}>
-          <Pressable onPress={goToday} style={styles.todayBtn}>
-            <AppText variant="caption" color="accent">
-              오늘
-            </AppText>
-          </Pressable>
+        <View>
+          <AppText variant="micro" color="textDim" nums style={styles.yearLabel}>
+            {center.year}
+          </AppText>
+          <AppText variant="display" nums style={styles.monthLabel}>
+            {center.month}월
+          </AppText>
         </View>
+        <Pressable onPress={goToday} hitSlop={8}>
+          <AppText variant="caption" color="accent">
+            오늘
+          </AppText>
+        </Pressable>
       </View>
 
       <View style={styles.weekdays}>
@@ -288,36 +307,36 @@ export function CalendarScreen() {
               grid={isWeekMode ? prevWeekGrid : prevGrid}
               width={width}
               cellHeight={cellHeight}
-              barsByRow={prevBars}
+              barsByRow={prevLayout.bars}
+              overflow={prevLayout.overflow}
               progress={progress}
               selectedWeekIndex={sideWeekIndex}
               selectedDate={selectedDate}
               today={today}
-              dots={dots}
               onSelectDate={onSelectDate}
             />
             <MonthPage
               grid={centerGrid}
               width={width}
               cellHeight={cellHeight}
-              barsByRow={centerBars}
+              barsByRow={centerLayout.bars}
+              overflow={centerLayout.overflow}
               progress={progress}
               selectedWeekIndex={selectedWeekIndex}
               selectedDate={selectedDate}
               today={today}
-              dots={dots}
               onSelectDate={onSelectDate}
             />
             <MonthPage
               grid={isWeekMode ? nextWeekGrid : nextGrid}
               width={width}
               cellHeight={cellHeight}
-              barsByRow={nextBars}
+              barsByRow={nextLayout.bars}
+              overflow={nextLayout.overflow}
               progress={progress}
               selectedWeekIndex={sideWeekIndex}
               selectedDate={selectedDate}
               today={today}
-              dots={dots}
               onSelectDate={onSelectDate}
             />
           </Animated.View>
@@ -345,18 +364,18 @@ const createStyles = (colors: ThemeColors) =>
     header: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingHorizontal: spacing.lg,
-      paddingBottom: spacing.md,
+      alignItems: 'flex-end',
+      paddingHorizontal: spacing.xl,
+      paddingBottom: spacing.lg,
     },
-    headerActions: { flexDirection: 'row', gap: spacing.md },
-    todayBtn: {
-      borderColor: colors.border,
-      borderWidth: 1,
-      borderRadius: 999,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.xs,
+    yearLabel: { letterSpacing: 2 },
+    monthLabel: { lineHeight: 38 },
+    weekdays: {
+      flexDirection: 'row',
+      paddingBottom: spacing.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+      marginBottom: spacing.xs,
     },
-    weekdays: { flexDirection: 'row', paddingBottom: spacing.xs },
-    weekdayLabel: { flex: 1, textAlign: 'center' },
+    weekdayLabel: { flex: 1, textAlign: 'center', letterSpacing: 1 },
   });
