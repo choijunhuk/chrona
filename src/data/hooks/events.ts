@@ -14,6 +14,7 @@ import type { EventDraft, EventRow } from '../mappers';
 import { toDomainEvent, toEventInsert } from '../mappers';
 import { assertOnline } from '../net';
 import { supabase } from '../supabase';
+import { rescheduleDebounced } from '@/native/rescheduler';
 
 export type EventRange = { from: Date; to: Date; tz: string };
 
@@ -98,7 +99,10 @@ export function useCreateEvent() {
     onError: (_e, _v, ctx) => {
       ctx?.snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.allEvents() }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.allEvents() });
+      rescheduleDebounced(); // master §3.6 트리거 2 (CRUD)
+    },
   });
 }
 
@@ -130,7 +134,10 @@ export function useUpdateEvent() {
     onError: (_e, _v, ctx) => {
       ctx?.snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.allEvents() }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.allEvents() });
+      rescheduleDebounced();
+    },
   });
 }
 
@@ -157,6 +164,9 @@ export function useDeleteEvent() {
     onError: (_e, _v, ctx) => {
       ctx?.snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.allEvents() }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.allEvents() });
+      rescheduleDebounced();
+    },
   });
 }

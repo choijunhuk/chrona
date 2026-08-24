@@ -147,8 +147,14 @@ export async function cancelOngoing(): Promise<void> {
 }
 
 export async function cancelAll(): Promise<void> {
+  await stopAlarmSound();
   await notifee.stopForegroundService();
   await notifee.cancelAllNotifications();
+}
+
+/** 예약(트리거)만 전체 취소 — 재계산 엔진 전용 (표시 중 알림은 유지) */
+export async function cancelAllTriggers(): Promise<void> {
+  await notifee.cancelTriggerNotifications();
 }
 
 export type ScheduledAlarm = {
@@ -172,16 +178,11 @@ export async function listScheduled(): Promise<ScheduledAlarm[]> {
 
 /** 해제: 소리 정지 + 포그라운드 서비스 즉시 종료 + 알림 제거 (Stage 0 §1-6) */
 export async function dismissAlarm(notificationId: string): Promise<void> {
-  console.log('[chrona] dismissAlarm id=', JSON.stringify(notificationId));
+  await stopAlarmSound();
   await notifee.stopForegroundService();
   if (notificationId) {
     await notifee.cancelNotification(notificationId);
   }
-  const remaining = await notifee.getDisplayedNotifications();
-  console.log(
-    '[chrona] after dismiss, displayed=',
-    remaining.map((n) => `${n.id}/${n.notification.android?.channelId}`)
-  );
 }
 
 /**
@@ -256,12 +257,22 @@ function nextMidnight(): Date {
  * 앵커 발화 처리: 재계산(Stage 0에선 로그만) → 자기 자신을 다음 자정으로 재예약 → 표시된 알림 제거.
  * Stage 3에서 recalc 본체가 이 자리에 들어온다.
  */
+let anchorRecalc: (() => Promise<unknown>) | null = null;
+
+/** index.js에서 rescheduleAll 주입 (rescheduler ↔ alarm 순환 import 방지) */
+export function setAnchorRecalc(fn: () => Promise<unknown>): void {
+  anchorRecalc = fn;
+}
+
 async function handleAnchorFired(notificationId: string | undefined): Promise<void> {
   console.log('[chrona] midnight anchor fired at', new Date().toISOString());
-  // TODO(Stage 3): 여기서 30건 재계산 실행 (마스터 §3.7)
-  await scheduleMidnightAnchor();
   if (notificationId) {
     await notifee.cancelNotification(notificationId);
+  }
+  if (anchorRecalc) {
+    await anchorRecalc(); // 재계산이 앵커 재예약까지 수행
+  } else {
+    await scheduleMidnightAnchor();
   }
 }
 
@@ -270,12 +281,6 @@ async function handleAnchorFired(notificationId: string | undefined): Promise<vo
 /** 알람 충돌 정책(§3.9): 새 알람 도착 시 이전에 표시 중인 알람을 전부 dismiss */
 async function overrideOlderAlarms(newId: string | undefined): Promise<void> {
   const displayed = await notifee.getDisplayedNotifications();
-  console.log(
-    '[chrona] overrideOlderAlarms newId=',
-    newId,
-    'displayed=',
-    displayed.map((n) => `${n.id}/${n.notification.android?.channelId}`)
-  );
   const olderAlarms = displayed.filter(
     (n) => n.notification.android?.channelId === CHANNELS.alarm && n.id !== newId
   );
@@ -325,7 +330,11 @@ function notifyAlarmDelivered(id: string | undefined, data: Record<string, unkno
 export function registerAlarmEngine(): void {
   // 포그라운드 서비스 runner: 알림이 살아있는 동안만 생존.
   // resolve하지 않는 Promise — stopForegroundService()로만 종료된다 (Stage 0 §1-7).
-  notifee.registerForegroundService(() => new Promise<void>(() => {}));
+  // 서비스 시작 시 자체 사운드 재생 — One UI가 채널 사운드를 삼키는 간헐 무음 보강.
+  notifee.registerForegroundService(() => {
+    void startAlarmSound();
+    return new Promise<void>(() => {});
+  });
 
   notifee.onBackgroundEvent(handleEvent);
   notifee.onForegroundEvent((event) => {
@@ -402,5 +411,38 @@ function alarmSettingLabel(setting: number): string {
       return '거부됨 — 설정 필요';
     default:
       return '해당 없음';
+  }
+}
+
+// ─── 알람 사운드 재생 (FGS 보강) ─────────────────────────
+// 채널 사운드가 간헐적으로 무음(One UI)이라 서비스에서 직접 루프 재생한다.
+// expo-audio는 JS 컨텍스트에서 동작 — FGS가 프로세스를 살려두는 동안 유효.
+
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
+
+let alarmPlayer: AudioPlayer | null = null;
+
+export async function startAlarmSound(): Promise<void> {
+  try {
+    if (alarmPlayer) return;
+    await setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    alarmPlayer = createAudioPlayer(require('../../assets/sounds/alarm_default.wav'));
+    alarmPlayer.loop = true;
+    alarmPlayer.volume = 1;
+    alarmPlayer.play();
+  } catch (e) {
+    console.warn('[chrona] alarm sound start failed:', e);
+  }
+}
+
+export async function stopAlarmSound(): Promise<void> {
+  try {
+    if (!alarmPlayer) return;
+    alarmPlayer.pause();
+    alarmPlayer.release();
+    alarmPlayer = null;
+  } catch {
+    alarmPlayer = null;
   }
 }

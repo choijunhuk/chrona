@@ -3,7 +3,7 @@ import * as Linking from 'expo-linking';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { StyleSheet } from 'react-native';
+import { AppState, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { handleAuthDeepLink, useSession } from '@/data/auth';
@@ -11,7 +11,7 @@ import { initNetListener } from '@/data/net';
 import { QueryProvider } from '@/data/query';
 import { serializeAlarmPayload } from '@/domain/alarm-payload';
 import { ensureChannels, getInitialAlarm, subscribeAlarmDelivered } from '@/native/alarm';
-import { restoreMissingAlarms } from '@/native/alarm-store';
+import { rescheduleAll } from '@/native/rescheduler';
 import { useTheme } from '@/ui/theme';
 
 // 스플래시는 폰트 로딩까지 유지 (stage-2 §1-2)
@@ -71,7 +71,8 @@ function Root() {
         return;
       }
 
-      await restoreMissingAlarms();
+      // 앱 시작 = 포그라운드 진입 → 재계산 (master §3.6 트리거 1. Stage 0의 부팅 복구도 대체)
+      await rescheduleAll();
     })();
 
     const unsubscribeAlarm = subscribeAlarmDelivered((notificationId, payload) => {
@@ -81,11 +82,16 @@ function Root() {
       });
     });
     const unsubscribeNet = initNetListener();
+    // 백그라운드 → 포그라운드 복귀 시 재계산 (master §3.6 트리거 1)
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void rescheduleAll();
+    });
 
     return () => {
       cancelled = true;
       unsubscribeAlarm();
       unsubscribeNet();
+      appStateSub.remove();
     };
   }, [router]);
 

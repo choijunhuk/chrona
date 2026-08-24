@@ -25,6 +25,7 @@
     "date-fns": "^4.4.0",
     "date-fns-tz": "^3.2.0",
     "expo": "~57.0.15",
+    "expo-audio": "~57.0.4",
     "expo-constants": "~57.0.13",
     "expo-dev-client": "~57.0.14",
     "expo-font": "~57.0.1",

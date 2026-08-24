@@ -58,6 +58,15 @@ export type PeriodPreset = {
   endTime: string;
 };
 
+export type EventOverride = {
+  id: string;
+  eventId: string;
+  originalStart: Date;
+  newStart: Date | null;
+  newEnd: Date | null;
+  isCancelled: boolean;
+};
+
 export type Reminder = {
   id: string;
   eventId: string;

@@ -11,9 +11,11 @@ import type {
   Category,
   ChronaEvent,
   EventKind,
+  EventOverride,
   PeriodPreset,
   Reminder,
   ReminderMode,
+  StandaloneAlarm,
 } from '@/domain/types';
 import { asDateOnly, normalizeTimeOfDay } from '@/domain/time';
 
@@ -116,6 +118,70 @@ export function toDomainReminder(row: ReminderRow): Reminder {
     soundKey: row.sound_key,
     vibrate: row.vibrate,
     enabled: row.enabled,
+  };
+}
+
+// ── event_overrides / standalone_alarms ─────────────────
+
+export type EventOverrideRow = Tables['event_overrides']['Row'];
+export type StandaloneAlarmRow = Tables['standalone_alarms']['Row'];
+export type StandaloneAlarmInsert = Tables['standalone_alarms']['Insert'];
+
+export function toDomainOverride(row: EventOverrideRow): EventOverride {
+  return {
+    id: row.id,
+    eventId: row.event_id,
+    originalStart: new Date(row.original_start),
+    newStart: date(row.new_start),
+    newEnd: date(row.new_end),
+    isCancelled: row.is_cancelled,
+  };
+}
+
+export function toDomainStandaloneAlarm(row: StandaloneAlarmRow): StandaloneAlarm {
+  return {
+    id: row.id,
+    time: normalizeTimeOfDay(row.time),
+    weekdays: row.weekdays,
+    label: row.label,
+    enabled: row.enabled,
+    soundKey: row.sound_key,
+    vibrate: row.vibrate,
+  };
+}
+
+export type StandaloneAlarmDraft = Omit<StandaloneAlarm, 'id'>;
+
+export function toStandaloneAlarmInsert(
+  draft: StandaloneAlarmDraft,
+  userId: string
+): StandaloneAlarmInsert {
+  return {
+    user_id: userId,
+    time: draft.time,
+    weekdays: draft.weekdays,
+    label: draft.label,
+    enabled: draft.enabled,
+    sound_key: draft.soundKey,
+    vibrate: draft.vibrate,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+// ── reminders (쓰기) ────────────────────────────────────
+
+export type ReminderInsert = Tables['reminders']['Insert'];
+export type ReminderDraft = Omit<Reminder, 'id' | 'eventId'>;
+
+export function toReminderInsert(draft: ReminderDraft, eventId: string): ReminderInsert {
+  return {
+    event_id: eventId,
+    offset_minutes: draft.offsetMinutes,
+    mode: draft.mode,
+    sound_key: draft.soundKey,
+    vibrate: draft.vibrate,
+    enabled: draft.enabled,
+    updated_at: new Date().toISOString(),
   };
 }
 
