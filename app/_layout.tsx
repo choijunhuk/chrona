@@ -13,6 +13,7 @@ import { serializeAlarmPayload } from '@/domain/alarm-payload';
 import { ensureChannels, getInitialAlarm, subscribeAlarmDelivered } from '@/native/alarm';
 import { rescheduleAll } from '@/native/rescheduler';
 import { maybeWeeklyCheck } from '@/native/permissions';
+import { restoreTimer } from '@/native/timer';
 import { useTheme } from '@/ui/theme';
 
 // 스플래시는 폰트 로딩까지 유지 (stage-2 §1-2)
@@ -75,6 +76,7 @@ function Root() {
       // 앱 시작 = 포그라운드 진입 → 재계산 (master §3.6 트리거 1. Stage 0의 부팅 복구도 대체)
       await rescheduleAll();
       await maybeWeeklyCheck();
+      await restoreTimer(); // 진행 중이던 타이머 복원 (stage-6)
     })();
 
     const unsubscribeAlarm = subscribeAlarmDelivered((notificationId, payload) => {

@@ -1,5 +1,6 @@
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -12,6 +13,7 @@ import { radius, spacing, type ThemeColors } from '@/ui/tokens';
 
 // Stage 2: 테마/디버그/로그아웃만. 통계·브리핑·권한·백업은 해당 스테이지에서 (master §8)
 export default function More() {
+  const [pickingBriefing, setPickingBriefing] = useState(false);
   const { colors, mode, setMode } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
@@ -67,6 +69,28 @@ export default function More() {
         </Pressable>
         <View style={styles.divider} />
         <View style={styles.row}>
+          <AppText>잠들기 전 브리핑</AppText>
+          <Switch
+            value={settings?.briefingEnabled ?? true}
+            onValueChange={(v) => {
+              haptics.selection();
+              updateSettings.mutate({ briefingEnabled: v });
+            }}
+            trackColor={{ true: colors.accent, false: colors.border }}
+            thumbColor={colors.white}
+          />
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <AppText>브리핑 시각</AppText>
+          <Pressable onPress={() => setPickingBriefing(true)}>
+            <AppText color="accent" nums>
+              {settings?.briefingTime ?? '23:00'}
+            </AppText>
+          </Pressable>
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
           <AppText>오늘 일정 상시 알림</AppText>
           <Switch
             value={settings?.ongoingEnabled ?? false}
@@ -86,6 +110,28 @@ export default function More() {
           <AppText color="textDim">›</AppText>
         </Pressable>
       </View>
+
+      {pickingBriefing && (
+        <DateTimePicker
+          value={(() => {
+            const d = new Date();
+            const [h, m] = (settings?.briefingTime ?? '23:00').split(':').map(Number);
+            d.setHours(h, m, 0, 0);
+            return d;
+          })()}
+          mode="time"
+          onChange={(e: DateTimePickerEvent, d?: Date) => {
+            setPickingBriefing(false);
+            if (e.type === 'set' && d) {
+              updateSettings.mutate({
+                briefingTime: `${String(d.getHours()).padStart(2, '0')}:${String(
+                  d.getMinutes()
+                ).padStart(2, '0')}`,
+              });
+            }
+          }}
+        />
+      )}
 
       <View style={[styles.card, styles.logoutCard]}>
         <Pressable

@@ -11,6 +11,7 @@
 import notifee, {
   AndroidCategory,
   AndroidImportance,
+  AndroidStyle,
   AndroidVisibility,
   AlarmType,
   EventType,
@@ -247,6 +248,92 @@ export async function postMissedAlarm(payload: AlarmPayload): Promise<void> {
   });
 }
 
+// ─── 타이머 알림 (stage-6) ──────────────────────────────
+
+const TIMER_ONGOING_ID = 'chrona-timer';
+const TIMER_COMPLETE_ID = 'chrona-timer-complete';
+
+/** 진행 중 상시 표시 — OS chronometer가 카운트다운을 그린다 (JS 갱신 0회) */
+export async function showTimerOngoing(title: string, endAt: Date, paused: boolean): Promise<void> {
+  await notifee.displayNotification({
+    id: TIMER_ONGOING_ID,
+    title: paused ? `⏸ ${title}` : `⏱ ${title}`,
+    body: paused ? '일시정지됨' : '집중 진행 중',
+    data: { chronaKind: 'timer' },
+    android: {
+      channelId: CHANNELS.timer,
+      importance: AndroidImportance.LOW,
+      ongoing: true,
+      autoCancel: false,
+      showChronometer: !paused,
+      chronometerDirection: 'down',
+      timestamp: endAt.getTime(),
+      pressAction: { id: 'default', launchActivity: 'default' },
+      actions: [
+        {
+          title: paused ? '재개' : '일시정지',
+          pressAction: { id: paused ? 'timer-resume' : 'timer-pause' },
+        },
+        { title: '종료', pressAction: { id: 'timer-stop' } },
+      ],
+    },
+  });
+}
+
+/** 완료 시 짧은 알람 (3초 — loopSound 없음) */
+export async function scheduleTimerComplete(fireAt: Date, title: string): Promise<string> {
+  return notifee.createTriggerNotification(
+    {
+      id: TIMER_COMPLETE_ID,
+      title: '집중 완료',
+      body: title,
+      data: { chronaKind: 'timer-complete' },
+      android: {
+        channelId: CHANNELS.alarm,
+        category: AndroidCategory.ALARM,
+        importance: AndroidImportance.HIGH,
+        sound: 'default',
+        vibrationPattern: VIBRATION_PATTERN,
+        pressAction: { id: 'default', launchActivity: 'default' },
+      },
+    },
+    {
+      type: TriggerType.TIMESTAMP,
+      timestamp: fireAt.getTime(),
+      alarmManager: { type: AlarmType.SET_ALARM_CLOCK },
+    }
+  );
+}
+
+export async function cancelTimerNotifications(): Promise<void> {
+  await notifee.cancelNotification(TIMER_ONGOING_ID);
+  await notifee.cancelTriggerNotification(TIMER_COMPLETE_ID);
+}
+
+// ─── 브리핑 (stage-6 §2) ────────────────────────────────
+
+/** 조용한 알림 1건. 내용은 예약 시점에 생성돼 문자열로 들어온다 (master §3.5) */
+export async function scheduleBriefing(body: string, fireAt: Date): Promise<string> {
+  return notifee.createTriggerNotification(
+    {
+      id: 'chrona-briefing',
+      title: '내일 브리핑',
+      body,
+      data: { chronaKind: 'briefing' },
+      android: {
+        channelId: CHANNELS.reminder,
+        style: { type: AndroidStyle.BIGTEXT, text: body },
+        pressAction: { id: 'briefing-open', launchActivity: 'default' },
+      },
+    },
+    {
+      type: TriggerType.TIMESTAMP,
+      timestamp: fireAt.getTime(),
+      alarmManager: { type: AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE },
+    }
+  );
+}
+
 // ─── 자정 앵커 (마스터 §3.6) ────────────────────────────
 
 /** 다음 자정(로컬)에 앵커 예약. fireAt 을 넘기면 그 시각으로 (디버그용) */
@@ -319,7 +406,26 @@ async function handleEvent({ type, detail }: Event): Promise<void> {
   const notification = detail.notification;
   const kind = notification?.data?.chronaKind;
 
+  // 타이머 알림 액션 (앱 안 열고 동작 — stage-6 §1-3)
+  if (type === EventType.ACTION_PRESS) {
+    const actionId = detail.pressAction?.id;
+    if (actionId === 'timer-pause' || actionId === 'timer-resume' || actionId === 'timer-stop') {
+      const timerModule = await import('@/native/timer');
+      if (actionId === 'timer-pause') await timerModule.pauseTimer();
+      if (actionId === 'timer-resume') await timerModule.resumeTimer();
+      if (actionId === 'timer-stop') await timerModule.finishTimer(false);
+      return;
+    }
+  }
+
   if (type === EventType.DELIVERED) {
+    if (kind === 'timer-complete') {
+      // 완료: 세션 기록 + 상시 알림 정리 (완료 알람 3초 뒤 자동 정리)
+      const timerModule = await import('@/native/timer');
+      await timerModule.finishTimer(true);
+      setTimeout(() => void notifee.cancelNotification('chrona-timer-complete'), 3500);
+      return;
+    }
     if (kind === ANCHOR_KIND) {
       await handleAnchorFired(notification?.id);
       return;

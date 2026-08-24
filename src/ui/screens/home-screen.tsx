@@ -233,10 +233,23 @@ export function HomeScreen() {
         </Animated.View>
       )}
 
-      {/* 집중 시작 — Stage 6까지 비활성 */}
-      <View style={[styles.focusBtn, styles.focusDisabled]}>
-        <AppText color="textDim">집중 시작 (준비 중)</AppText>
-      </View>
+      {/* 집중 시작 (stage-6) — 다음 일정이 수업이면 연결 */}
+      <Pressable
+        style={styles.focusBtn}
+        onPress={() =>
+          router.push({
+            pathname: '/timer',
+            params:
+              nextEvent?.kind === 'timetable'
+                ? { eventId: nextEvent.id, title: nextEvent.title }
+                : {},
+          })
+        }
+      >
+        <AppText color="accent" style={styles.focusText}>
+          ▶ 집중 시작
+        </AppText>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -301,5 +314,5 @@ const createStyles = (colors: ThemeColors) =>
       borderWidth: 1,
       borderColor: colors.border,
     },
-    focusDisabled: { opacity: 0.5 },
+    focusText: { fontWeight: '600' },
   });

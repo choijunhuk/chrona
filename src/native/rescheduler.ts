@@ -16,6 +16,7 @@ import {
   cancelAllTriggers,
   cancelOngoing,
   isAlarmRinging,
+  scheduleBriefing,
   scheduleAlarm,
   scheduleMidnightAnchor,
   scheduleReminder,
@@ -72,6 +73,42 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
     else await scheduleReminder(p.payload, p.fireAt);
   }
   await scheduleMidnightAnchor();
+
+  // 브리핑 (stage-6 §2): 내용은 지금(예약 시점) 생성 — 발화 시 DB 조회 없음 (master §3.5)
+  if (source.settings?.briefingEnabled ?? true) {
+    const [bh, bm] = (source.settings?.briefingTime ?? '23:00').split(':').map(Number);
+    const briefAt = new Date(now);
+    briefAt.setHours(bh, bm, 0, 0);
+    if (briefAt.getTime() <= now.getTime()) briefAt.setDate(briefAt.getDate() + 1);
+
+    const tomorrowStart = new Date(briefAt);
+    tomorrowStart.setHours(24, 0, 0, 0);
+    const tomorrowEnd = new Date(tomorrowStart.getTime() + 86400_000);
+    const tomorrows = occurrences
+      .filter((o) => o.start >= tomorrowStart && o.start < tomorrowEnd)
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+    const dueSoon = source.events.filter(
+      (e) =>
+        e.kind === 'task' &&
+        !e.isDone &&
+        e.dueAt &&
+        e.dueAt.getTime() - now.getTime() < 3 * 86400_000 &&
+        e.dueAt.getTime() > now.getTime()
+    );
+    const lines: string[] = [];
+    lines.push(
+      tomorrows.length === 0
+        ? '내일은 일정이 없어요'
+        : `내일 일정 ${tomorrows.length}개 · 첫 일정 ${formatTimeLabel(tomorrows[0].start, tz)}`
+    );
+    if (tomorrows.length > 0) {
+      lines.push(tomorrows.slice(0, 3).map((o) => o.title).join(' · '));
+    }
+    if (dueSoon.length > 0) {
+      lines.push(`마감 임박: ${dueSoon.map((e) => e.title).slice(0, 2).join(', ')}`);
+    }
+    await scheduleBriefing(lines.join('\n'), briefAt);
+  }
 
   // 상시 알림(③): 오늘 남은 일정 요약 — CRUD·자정 시점에만 갱신 (master §6)
   if (source.settings?.ongoingEnabled) {
