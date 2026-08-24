@@ -18,8 +18,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCreateEvent, useDeleteEvent, useEvent, useUpdateEvent } from '@/data/hooks/events';
-import { useCategories } from '@/data/hooks/settings';
-import type { EventDraft } from '@/data/mappers';
+import { useReminders, useSaveReminders } from '@/data/hooks/reminders';
+import { useCategories, useSettings } from '@/data/hooks/settings';
+import type { EventDraft, ReminderDraft } from '@/data/mappers';
 import { asDateOnly, formatTimeLabel, fromDateOnly, isDateOnly, toDateOnly } from '@/domain/time';
 import { Button } from '@/ui/components/button';
 import { ColorDot } from '@/ui/components/color-dot';
@@ -41,7 +42,25 @@ type FormInitial = {
   endsAt: Date;
   categoryId: string | null;
   color: string | null;
+  reminders: ReminderDraft[];
 };
+
+const OFFSET_PRESETS = [
+  { label: '정시', minutes: 0 },
+  { label: '5분 전', minutes: 5 },
+  { label: '10분 전', minutes: 10 },
+  { label: '30분 전', minutes: 30 },
+  { label: '1시간 전', minutes: 60 },
+  { label: '1일 전', minutes: 1440 },
+] as const;
+
+function offsetLabel(minutes: number): string {
+  const preset = OFFSET_PRESETS.find((p) => p.minutes === minutes);
+  if (preset) return preset.label;
+  if (minutes % 1440 === 0) return `${minutes / 1440}일 전`;
+  if (minutes % 60 === 0) return `${minutes / 60}시간 전`;
+  return `${minutes}분 전`;
+}
 
 /** 라우트 래퍼: 데이터 준비 후 폼을 초기값과 함께 마운트 (effect 내 setState 회피) */
 export function EventEditor() {
@@ -50,6 +69,8 @@ export function EventEditor() {
   const params = useLocalSearchParams<{ id: string; date?: string }>();
   const isNew = params.id === 'new';
   const existing = useEvent(isNew ? '' : params.id);
+  const existingReminders = useReminders(isNew ? null : params.id);
+  const { data: settings } = useSettings();
 
   const baseDate =
     params.date && isDateOnly(params.date) ? params.date : toDateOnly(new Date(), TZ);
@@ -58,7 +79,9 @@ export function EventEditor() {
   const defaultEnd = fromDateOnly(asDateOnly(baseDate), TZ);
   defaultEnd.setHours(10, 0, 0, 0);
 
-  if (!isNew && !existing.data) return <View style={styles.container} />;
+  if (!isNew && (!existing.data || existingReminders.isPending)) {
+    return <View style={styles.container} />;
+  }
 
   const e = existing.data;
   const initial: FormInitial =
@@ -76,6 +99,13 @@ export function EventEditor() {
               : (e.endsAt ?? defaultEnd),
           categoryId: e.categoryId,
           color: e.color,
+          reminders: (existingReminders.data ?? []).map((r) => ({
+            offsetMinutes: r.offsetMinutes,
+            mode: r.mode,
+            soundKey: r.soundKey,
+            vibrate: r.vibrate,
+            enabled: r.enabled,
+          })),
         }
       : {
           title: '',
@@ -86,6 +116,16 @@ export function EventEditor() {
           endsAt: defaultEnd,
           categoryId: null,
           color: null,
+          // 새 일정: 기본 알림 자동 부착 (사용자 확정: 10분 전)
+          reminders: [
+            {
+              offsetMinutes: settings?.defaultReminderOffset ?? 10,
+              mode: 'notify' as const,
+              soundKey: settings?.defaultSoundKey ?? 'default',
+              vibrate: true,
+              enabled: true,
+            },
+          ],
         };
 
   return <EventForm key={params.id} id={params.id} isNew={isNew} initial={initial} />;
@@ -111,6 +151,9 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
   const [categoryId, setCategoryId] = useState<string | null>(initial.categoryId);
   const [color, setColor] = useState<string | null>(initial.color);
   const [picker, setPicker] = useState<PickerTarget>(null);
+  const [reminders, setReminders] = useState<ReminderDraft[]>(initial.reminders);
+  const [showPresets, setShowPresets] = useState(false);
+  const saveReminders = useSaveReminders();
 
   const buildDraft = (): EventDraft => ({
     kind: 'schedule',
@@ -136,11 +179,14 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
 
   const save = async () => {
     try {
+      let eventId = id;
       if (isNew) {
-        await createMutation.mutateAsync(buildDraft());
+        const created = await createMutation.mutateAsync(buildDraft());
+        eventId = created.id;
       } else {
         await updateMutation.mutateAsync({ id, draft: buildDraft() });
       }
+      await saveReminders.mutateAsync({ eventId, drafts: reminders });
       haptics.success();
       router.back();
     } catch (e) {
@@ -242,6 +288,70 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
         </View>
       </View>
 
+      {/* 알림 (stage-3 §1-5) */}
+      <AppText variant="caption" color="textSub">
+        알림
+      </AppText>
+      {reminders.map((r, i) => (
+        <View key={i} style={[styles.reminderRow, r.mode === 'alarm' && styles.reminderAlarm]}>
+          <AppText nums style={styles.reminderLabel}>
+            {r.mode === 'alarm' ? '⏰ ' : ''}
+            {offsetLabel(r.offsetMinutes)}
+          </AppText>
+          <Pressable
+            style={[styles.modeChip, r.mode === 'alarm' && styles.modeChipAlarm]}
+            onPress={() =>
+              setReminders((rs) =>
+                rs.map((x, j) =>
+                  j === i ? { ...x, mode: x.mode === 'alarm' ? 'notify' : 'alarm' } : x
+                )
+              )
+            }
+          >
+            <AppText variant="caption" color={r.mode === 'alarm' ? 'white' : 'textSub'}>
+              {r.mode === 'alarm' ? '알람' : '알림'}
+            </AppText>
+          </Pressable>
+          <Pressable
+            hitSlop={8}
+            onPress={() => setReminders((rs) => rs.filter((_, j) => j !== i))}
+          >
+            <AppText color="textDim">✕</AppText>
+          </Pressable>
+        </View>
+      ))}
+      {showPresets ? (
+        <View style={styles.chipRow}>
+          {OFFSET_PRESETS.map((p) => (
+            <Pressable
+              key={p.minutes}
+              style={styles.chip}
+              onPress={() => {
+                setReminders((rs) => [
+                  ...rs,
+                  {
+                    offsetMinutes: p.minutes,
+                    mode: 'notify',
+                    soundKey: 'default',
+                    vibrate: true,
+                    enabled: true,
+                  },
+                ]);
+                setShowPresets(false);
+              }}
+            >
+              <AppText variant="caption">{p.label}</AppText>
+            </Pressable>
+          ))}
+        </View>
+      ) : (
+        <Pressable onPress={() => setShowPresets(true)}>
+          <AppText variant="caption" color="accent">
+            + 알림 추가
+          </AppText>
+        </Pressable>
+      )}
+
       {/* 카테고리 */}
       <AppText variant="caption" color="textSub">
         카테고리
@@ -329,6 +439,28 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  reminderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  // 알람 모드는 시각적으로 강조 — 실수로 켜면 새벽에 울린다 (stage-3 §1-5)
+  reminderAlarm: { borderColor: colors.accent, backgroundColor: `${colors.accent}14` },
+  reminderLabel: { flex: 1 },
+  modeChip: {
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  modeChipAlarm: { backgroundColor: colors.accent, borderColor: colors.accent },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

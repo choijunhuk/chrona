@@ -98,6 +98,7 @@ export type FocusSession = {
 
 export type AppSettings = {
   briefingEnabled: boolean;
+  ongoingEnabled: boolean;
   briefingTime: string; // 'HH:MM'
   defaultReminderOffset: number;
   snoozeMinutes: number;

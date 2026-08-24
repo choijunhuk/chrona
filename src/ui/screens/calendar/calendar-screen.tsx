@@ -18,6 +18,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useEvents } from '@/data/hooks/events';
+import { usePermissionStore } from '@/native/permissions';
 import { useCategories } from '@/data/hooks/settings';
 import {
   WEEKDAY_LABELS,
@@ -269,8 +270,20 @@ export function CalendarScreen() {
 
   const isWeekMode = mode === 'week';
 
+  const permissionBroken = usePermissionStore((s) => s.broken);
+
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.sm }]}>
+      {permissionBroken && (
+        <Pressable
+          style={styles.permBanner}
+          onPress={() => router.push('/onboarding/permissions')}
+        >
+          <AppText variant="caption" color="white">
+            ⚠️ 알람 권한이 깨졌습니다 — 탭해서 복구
+          </AppText>
+        </Pressable>
+      )}
       <View style={styles.header}>
         <View>
           <AppText variant="micro" color="textDim" nums style={styles.yearLabel}>
@@ -361,6 +374,14 @@ export function CalendarScreen() {
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
+    permBanner: {
+      backgroundColor: colors.danger,
+      marginHorizontal: spacing.lg,
+      marginBottom: spacing.sm,
+      borderRadius: 10,
+      paddingVertical: spacing.sm,
+      alignItems: 'center',
+    },
     header: {
       flexDirection: 'row',
       justifyContent: 'space-between',

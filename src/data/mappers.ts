@@ -201,6 +201,7 @@ export function toDomainPeriodPreset(row: PeriodPresetRow): PeriodPreset {
 export function toDomainSettings(row: AppSettingsRow): AppSettings {
   return {
     briefingEnabled: row.briefing_enabled,
+    ongoingEnabled: row.ongoing_enabled,
     briefingTime: normalizeTimeOfDay(row.briefing_time),
     defaultReminderOffset: row.default_reminder_offset,
     snoozeMinutes: row.snooze_minutes,
@@ -215,6 +216,7 @@ export function toDomainSettings(row: AppSettingsRow): AppSettings {
 export function toSettingsUpdate(patch: Partial<AppSettings>): AppSettingsUpdate {
   const u: AppSettingsUpdate = { updated_at: new Date().toISOString() };
   if (patch.briefingEnabled !== undefined) u.briefing_enabled = patch.briefingEnabled;
+  if (patch.ongoingEnabled !== undefined) u.ongoing_enabled = patch.ongoingEnabled;
   if (patch.briefingTime !== undefined) u.briefing_time = patch.briefingTime;
   if (patch.defaultReminderOffset !== undefined)
     u.default_reminder_offset = patch.defaultReminderOffset;

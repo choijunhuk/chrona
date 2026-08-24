@@ -4,7 +4,7 @@
  * 항상: 스냅샷 로드 → 전개 → 상위 30건 산출 → 전체 취소 → 전체 재예약 → 앵커 재예약.
  * 부분 갱신 금지. headless(부팅/앵커)에서도 동작 — 네트워크 의존 없음(스냅샷).
  */
-import { resolveTimezone } from '@/domain/time';
+import { formatTimeLabel, resolveTimezone, toDateOnly } from '@/domain/time';
 import {
   ALARM_LIMIT,
   computeAlarmTimes,
@@ -14,9 +14,11 @@ import {
 import { readRescheduleSource, refreshRescheduleSource } from '@/data/reschedule-source';
 import {
   cancelAllTriggers,
+  cancelOngoing,
   scheduleAlarm,
   scheduleMidnightAnchor,
   scheduleReminder,
+  showOngoing,
 } from '@/native/alarm';
 
 export type RescheduleResult = {
@@ -62,6 +64,21 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
     else await scheduleReminder(p.payload, p.fireAt);
   }
   await scheduleMidnightAnchor();
+
+  // 상시 알림(③): 오늘 남은 일정 요약 — CRUD·자정 시점에만 갱신 (master §6)
+  if (source.settings?.ongoingEnabled) {
+    const today = toDateOnly(now, tz);
+    const todays = occurrences
+      .filter((o) => toDateOnly(o.start, tz) === today && o.start.getTime() > now.getTime())
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+    const body =
+      todays.length === 0
+        ? '오늘 남은 일정이 없습니다'
+        : `남은 일정 ${todays.length}건 · 다음: ${todays[0].title} ${formatTimeLabel(todays[0].start, tz)}`;
+    await showOngoing('오늘 일정', body);
+  } else {
+    await cancelOngoing();
+  }
   // TODO(Stage 9): 위젯용 SharedPreferences write
 
   const nextAt = planned[0]?.fireAt ?? null;

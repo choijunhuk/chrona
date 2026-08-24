@@ -29,6 +29,7 @@ import {
   showOngoing,
 } from '@/native/alarm';
 import { clearRemembered, rememberScheduled } from '@/native/alarm-store';
+import { rescheduleAll } from '@/native/rescheduler';
 
 function testPayload(fireAt: Date, title: string): AlarmPayload {
   return {
@@ -95,6 +96,12 @@ const actions = {
     await cancelAll();
     await clearRemembered();
     return '모든 알람·알림 취소됨';
+  },
+  forceReschedule: async () => {
+    const r = await rescheduleAll({ refresh: true });
+    return `재계산 완료 (${r.source}): ${r.scheduled}건 예약, 다음: ${
+      r.nextAt ? r.nextAt.toLocaleString() : '없음'
+    }`;
   },
   anchor: async () => {
     await scheduleMidnightAnchor(new Date(Date.now() + 60_000));
@@ -324,6 +331,7 @@ export default function Debug() {
         <Btn label="상시 알림 표시 (③)" onPress={ongoingOn} half />
         <Btn label="상시 알림 해제" onPress={ongoingOff} half />
       </View>
+      <Btn label="재계산 강제 실행 (30건)" onPress={run(actions.forceReschedule)} accent />
       <Btn label="예약된 알람 목록 덤프" onPress={dump} />
       <Btn label="권한 상태 전체 조회" onPress={perms} />
       <Btn label="모든 알람 취소" onPress={wipe} />

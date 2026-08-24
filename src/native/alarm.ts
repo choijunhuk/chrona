@@ -25,6 +25,12 @@ import {
   type AlarmPayload,
 } from '@/domain/alarm-payload';
 
+// ─── 알람 사운드 재생 (FGS 보강) ─────────────────────────
+// 채널 사운드가 간헐적으로 무음(One UI)이라 서비스에서 직접 루프 재생한다.
+// expo-audio는 JS 컨텍스트에서 동작 — FGS가 프로세스를 살려두는 동안 유효.
+
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
+
 export const CHANNELS = {
   alarm: 'chrona.alarm',
   reminder: 'chrona.reminder',
@@ -390,6 +396,10 @@ export async function openBatterySettings(): Promise<void> {
   await notifee.openBatteryOptimizationSettings();
 }
 
+export async function openNotificationSettings(): Promise<void> {
+  await notifee.openNotificationSettings();
+}
+
 function authorizationLabel(status: number): string {
   // AuthorizationStatus: -1 NOT_DETERMINED / 0 DENIED / 1 AUTHORIZED / 2 PROVISIONAL
   switch (status) {
@@ -414,19 +424,13 @@ function alarmSettingLabel(setting: number): string {
   }
 }
 
-// ─── 알람 사운드 재생 (FGS 보강) ─────────────────────────
-// 채널 사운드가 간헐적으로 무음(One UI)이라 서비스에서 직접 루프 재생한다.
-// expo-audio는 JS 컨텍스트에서 동작 — FGS가 프로세스를 살려두는 동안 유효.
-
-import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
-
 let alarmPlayer: AudioPlayer | null = null;
 
 export async function startAlarmSound(): Promise<void> {
   try {
     if (alarmPlayer) return;
     await setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true });
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+     
     alarmPlayer = createAudioPlayer(require('../../assets/sounds/alarm_default.wav'));
     alarmPlayer.loop = true;
     alarmPlayer.volume = 1;

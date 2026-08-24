@@ -12,6 +12,7 @@ import { QueryProvider } from '@/data/query';
 import { serializeAlarmPayload } from '@/domain/alarm-payload';
 import { ensureChannels, getInitialAlarm, subscribeAlarmDelivered } from '@/native/alarm';
 import { rescheduleAll } from '@/native/rescheduler';
+import { maybeWeeklyCheck } from '@/native/permissions';
 import { useTheme } from '@/ui/theme';
 
 // 스플래시는 폰트 로딩까지 유지 (stage-2 §1-2)
@@ -73,6 +74,7 @@ function Root() {
 
       // 앱 시작 = 포그라운드 진입 → 재계산 (master §3.6 트리거 1. Stage 0의 부팅 복구도 대체)
       await rescheduleAll();
+      await maybeWeeklyCheck();
     })();
 
     const unsubscribeAlarm = subscribeAlarmDelivered((notificationId, payload) => {
@@ -84,7 +86,10 @@ function Root() {
     const unsubscribeNet = initNetListener();
     // 백그라운드 → 포그라운드 복귀 시 재계산 (master §3.6 트리거 1)
     const appStateSub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void rescheduleAll();
+      if (state === 'active') {
+        void rescheduleAll();
+        void maybeWeeklyCheck(); // 주1회 권한 재확인 (master §4.2)
+      }
     });
 
     return () => {

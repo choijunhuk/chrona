@@ -20,6 +20,7 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen name="calendar" options={{ title: '캘린더' }} />
+      <Tabs.Screen name="alarms" options={{ title: '알람' }} />
       <Tabs.Screen name="more" options={{ title: '더보기' }} />
     </Tabs>
   );
