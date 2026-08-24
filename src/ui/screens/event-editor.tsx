@@ -5,7 +5,16 @@
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  TextInput,
+  ToastAndroid,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCreateEvent, useDeleteEvent, useEvent, useUpdateEvent } from '@/data/hooks/events';
@@ -134,8 +143,12 @@ function EventForm({ id, isNew, initial }: { id: string; isNew: boolean; initial
       }
       haptics.success();
       router.back();
-    } catch {
-      // 오프라인 토스트는 assertOnline이 이미 띄움
+    } catch (e) {
+      // 실패를 절대 조용히 삼키지 않는다 (오프라인 토스트는 assertOnline이 별도 표출)
+      console.warn('[chrona] save failed:', e);
+      if (String(e) !== 'Error: offline') {
+        ToastAndroid.show(`저장 실패: ${String(e)}`, ToastAndroid.LONG);
+      }
     }
   };
 

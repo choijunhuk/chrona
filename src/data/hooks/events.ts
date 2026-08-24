@@ -61,9 +61,10 @@ export function useEvent(id: string) {
 }
 
 async function currentUserId(): Promise<string> {
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data.user) throw new Error('not authenticated');
-  return data.user.id;
+  // getSession = 로컬 조회 (getUser는 네트워크 왕복이라 감산)
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session) throw new Error('not authenticated');
+  return data.session.user.id;
 }
 
 export function useCreateEvent() {

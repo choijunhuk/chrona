@@ -148,7 +148,11 @@ export function CalendarScreen() {
     })
     .onUpdate((e) => {
       if (axis.value === 0) {
-        axis.value = Math.abs(e.translationY) >= Math.abs(e.translationX) ? 1 : 2;
+        // 첫 프레임 지터로 잘못 잠기지 않게, 이동량이 충분해진 뒤에만 축 판별
+        const ax = Math.abs(e.translationX);
+        const ay = Math.abs(e.translationY);
+        if (Math.max(ax, ay) < 12) return;
+        axis.value = ay >= ax ? 1 : 2;
       }
       if (axis.value === 1) {
         const p = startProgress.value - e.translationY / COLLAPSE_DISTANCE;
