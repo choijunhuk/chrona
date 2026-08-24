@@ -114,7 +114,7 @@ export function HomeScreen() {
       {/* 다음 일정 */}
       <Animated.View entering={FadeInDown.delay(40)} style={styles.section}>
         <AppText variant="micro" color="textDim" style={styles.sectionLabel}>
-          다음 일정
+          {nextEvent?.kind === 'timetable' ? '다음 수업' : '다음 일정'}
         </AppText>
         {nextEvent ? (
           <Pressable

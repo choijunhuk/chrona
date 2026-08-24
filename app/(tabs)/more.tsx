@@ -61,6 +61,11 @@ export default function More() {
           <AppText color="textDim">›</AppText>
         </Pressable>
         <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={() => router.push('/periods')}>
+          <AppText>교시 시간 편집</AppText>
+          <AppText color="textDim">›</AppText>
+        </Pressable>
+        <View style={styles.divider} />
         <View style={styles.row}>
           <AppText>오늘 일정 상시 알림</AppText>
           <Switch
