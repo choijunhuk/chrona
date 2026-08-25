@@ -58,6 +58,7 @@
 
 ## Stage 4~10 — 자율주행 일괄 (2026-08-24)
 
+- 머지 커밋: `c5662ed` (main, GitHub 푸시됨)
 - 브랜치 체인: stage-4-tasks-home → … → stage-10-web (순차 분기 — stage-10 머지가 전체 포함)
 - 테스트 74개 전부 통과 (task 12 / recurrence 9 / rrule-ui 3 / stats 8 추가). 앱 release·웹 vite 빌드 성공
 - 스펙 이탈(사유는 ARCHITECTURE): 통계 차트 SVG(Skia 미채택), 위젯 브릿지 파일 기반, 모노레포 루트 유지+별칭 보존, 브리핑 주말 토글 미구현
