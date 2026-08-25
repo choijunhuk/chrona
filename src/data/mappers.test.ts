@@ -163,6 +163,7 @@ describe('settings 매핑', () => {
   it('toDomainSettings: time 컬럼 HH:MM 정규화', () => {
     const s = toDomainSettings({
       user_id: 'u1',
+      ongoing_enabled: false,
       briefing_enabled: true,
       briefing_time: '23:00:00',
       default_reminder_offset: 10,

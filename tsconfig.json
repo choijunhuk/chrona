@@ -4,6 +4,12 @@
     "strict": true,
     "types": ["node"],
     "paths": {
+      "@/domain/*": [
+        "./packages/domain/src/*"
+      ],
+      "@chrona/domain": [
+        "./packages/domain/src/index.ts"
+      ],
       "@/*": [
         "./src/*"
       ],

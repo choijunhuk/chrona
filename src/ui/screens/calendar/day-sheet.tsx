@@ -8,6 +8,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { formatKoreanDate } from '@/domain/calendar';
+import type { DisplayItem } from '@/domain/display';
 import type { Category, ChronaEvent } from '@/domain/types';
 import { formatTimeLabel, type DateOnly, toDateOnly } from '@/domain/time';
 import { ColorDot } from '@/ui/components/color-dot';
@@ -20,11 +21,11 @@ import { TimelineDay } from './timeline-day';
 
 type Props = {
   date: DateOnly;
-  events: ChronaEvent[];
+  items: DisplayItem[];
   categories: Category[];
   loading: boolean;
   tz: string;
-  onPressEvent: (id: string) => void;
+  onPressEvent: (id: string, occ?: string) => void;
   onPressAdd: () => void;
 };
 
@@ -32,40 +33,49 @@ export function eventColor(e: ChronaEvent, categories: Category[]): string {
   return e.color ?? categories.find((c) => c.id === e.categoryId)?.color ?? darkColors.accent;
 }
 
-export function DaySheet({ date, events, categories, loading, tz, onPressEvent, onPressAdd }: Props) {
+export function DaySheet({ date, items, categories, loading, tz, onPressEvent, onPressAdd }: Props) {
   const sheetRef = useRef<BottomSheet>(null);
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [snapIndex, setSnapIndex] = useState(0);
   const snapPoints = useMemo(() => ['16%', '45%', '90%'], []);
 
+  // 반복 전개된 DisplayItem 기준 (stage-5). timed는 회차별 사본 이벤트로 변환해 기존 렌더 재사용
   const dayEvents = useMemo(() => {
     const timed: ChronaEvent[] = [];
     const allDay: ChronaEvent[] = [];
-    for (const e of events) {
-      if (e.allDay && e.startDate) {
-        if (e.startDate <= date && date <= (e.endDate ?? e.startDate)) allDay.push(e);
-      } else if (e.startsAt) {
-        // 자정을 넘는 일정: 걸치는 모든 날에 표시 (사용자 요청)
-        const spanStart = toDateOnly(e.startsAt, tz);
-        const spanEnd = toDateOnly(e.endsAt ?? e.startsAt, tz);
-        if (spanStart <= date && date <= spanEnd) timed.push(e);
-      } else if (e.kind === 'task' && e.dueAt && toDateOnly(e.dueAt, tz) === date) {
-        timed.push(e);
+    for (const it of items) {
+      if (it.startDate) {
+        if (it.startDate <= date && date <= (it.endDate ?? it.startDate)) allDay.push(it.event);
+      } else if (it.start) {
+        const spanStart = toDateOnly(it.start, tz);
+        const spanEnd = toDateOnly(it.end ?? it.start, tz);
+        if (spanStart <= date && date <= spanEnd) {
+          timed.push(
+            it.event.kind === 'task'
+              ? it.event
+              : { ...it.event, startsAt: it.start, endsAt: it.end }
+          );
+        }
       }
     }
     timed.sort(
-      (a, b) => (a.startsAt ?? a.dueAt ?? new Date(0)).getTime() - (b.startsAt ?? b.dueAt ?? new Date(0)).getTime()
+      (a, b) =>
+        (a.startsAt ?? a.dueAt ?? new Date(0)).getTime() -
+        (b.startsAt ?? b.dueAt ?? new Date(0)).getTime()
     );
     return { timed, allDay };
-  }, [events, date, tz]);
+  }, [items, date, tz]);
 
   const renderItem = useCallback(
     ({ item, index }: { item: ChronaEvent; index: number }) => {
       const at = item.startsAt ?? item.dueAt;
       return (
         <Animated.View entering={FadeInDown.delay(index * 20)}>
-          <Pressable style={styles.item} onPress={() => onPressEvent(item.id)}>
+          <Pressable
+            style={styles.item}
+            onPress={() => onPressEvent(item.id, item.startsAt?.toISOString())}
+          >
             <View style={[styles.colorBar, { backgroundColor: eventColor(item, categories) }]} />
             <View style={styles.itemBody}>
               <AppText variant="body" style={item.isDone ? styles.done : undefined}>

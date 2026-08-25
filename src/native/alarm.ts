@@ -11,6 +11,7 @@
 import notifee, {
   AndroidCategory,
   AndroidImportance,
+  AndroidStyle,
   AndroidVisibility,
   AlarmType,
   EventType,
@@ -24,6 +25,12 @@ import {
   serializeAlarmPayload,
   type AlarmPayload,
 } from '@/domain/alarm-payload';
+
+// ─── 알람 사운드 재생 (FGS 보강) ─────────────────────────
+// 채널 사운드가 간헐적으로 무음(One UI)이라 서비스에서 직접 루프 재생한다.
+// expo-audio는 JS 컨텍스트에서 동작 — FGS가 프로세스를 살려두는 동안 유효.
+
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 
 export const CHANNELS = {
   alarm: 'chrona.alarm',
@@ -147,8 +154,33 @@ export async function cancelOngoing(): Promise<void> {
 }
 
 export async function cancelAll(): Promise<void> {
+  await stopAlarmSound();
   await notifee.stopForegroundService();
   await notifee.cancelAllNotifications();
+}
+
+/**
+ * 예약(트리거)만 전체 취소 — 재계산 엔진 전용.
+ * ⚠ 인자 없는 cancelTriggerNotifications()는 방금 발화해 표시 중인 알람 알림까지
+ * 제거한다 (실기기에서 알람이 울리자마자 사라지는 버그의 원인). 반드시
+ * pending id 목록을 뽑아 표시 중인 것을 제외하고 취소한다.
+ */
+export async function cancelAllTriggers(): Promise<void> {
+  const [pendingIds, displayed] = await Promise.all([
+    notifee.getTriggerNotificationIds(),
+    notifee.getDisplayedNotifications(),
+  ]);
+  const displayedIds = new Set(displayed.map((d) => d.id));
+  const toCancel = pendingIds.filter((id) => !displayedIds.has(id));
+  if (toCancel.length > 0) {
+    await notifee.cancelTriggerNotifications(toCancel);
+  }
+}
+
+/** 알람(②)이 지금 울리는 중인지 — 재계산 지연 판단용 */
+export async function isAlarmRinging(): Promise<boolean> {
+  const displayed = await notifee.getDisplayedNotifications();
+  return displayed.some((n) => n.notification.android?.channelId === CHANNELS.alarm);
 }
 
 export type ScheduledAlarm = {
@@ -172,16 +204,11 @@ export async function listScheduled(): Promise<ScheduledAlarm[]> {
 
 /** 해제: 소리 정지 + 포그라운드 서비스 즉시 종료 + 알림 제거 (Stage 0 §1-6) */
 export async function dismissAlarm(notificationId: string): Promise<void> {
-  console.log('[chrona] dismissAlarm id=', JSON.stringify(notificationId));
+  await stopAlarmSound();
   await notifee.stopForegroundService();
   if (notificationId) {
     await notifee.cancelNotification(notificationId);
   }
-  const remaining = await notifee.getDisplayedNotifications();
-  console.log(
-    '[chrona] after dismiss, displayed=',
-    remaining.map((n) => `${n.id}/${n.notification.android?.channelId}`)
-  );
 }
 
 /**
@@ -221,6 +248,92 @@ export async function postMissedAlarm(payload: AlarmPayload): Promise<void> {
   });
 }
 
+// ─── 타이머 알림 (stage-6) ──────────────────────────────
+
+const TIMER_ONGOING_ID = 'chrona-timer';
+const TIMER_COMPLETE_ID = 'chrona-timer-complete';
+
+/** 진행 중 상시 표시 — OS chronometer가 카운트다운을 그린다 (JS 갱신 0회) */
+export async function showTimerOngoing(title: string, endAt: Date, paused: boolean): Promise<void> {
+  await notifee.displayNotification({
+    id: TIMER_ONGOING_ID,
+    title: paused ? `⏸ ${title}` : `⏱ ${title}`,
+    body: paused ? '일시정지됨' : '집중 진행 중',
+    data: { chronaKind: 'timer' },
+    android: {
+      channelId: CHANNELS.timer,
+      importance: AndroidImportance.LOW,
+      ongoing: true,
+      autoCancel: false,
+      showChronometer: !paused,
+      chronometerDirection: 'down',
+      timestamp: endAt.getTime(),
+      pressAction: { id: 'default', launchActivity: 'default' },
+      actions: [
+        {
+          title: paused ? '재개' : '일시정지',
+          pressAction: { id: paused ? 'timer-resume' : 'timer-pause' },
+        },
+        { title: '종료', pressAction: { id: 'timer-stop' } },
+      ],
+    },
+  });
+}
+
+/** 완료 시 짧은 알람 (3초 — loopSound 없음) */
+export async function scheduleTimerComplete(fireAt: Date, title: string): Promise<string> {
+  return notifee.createTriggerNotification(
+    {
+      id: TIMER_COMPLETE_ID,
+      title: '집중 완료',
+      body: title,
+      data: { chronaKind: 'timer-complete' },
+      android: {
+        channelId: CHANNELS.alarm,
+        category: AndroidCategory.ALARM,
+        importance: AndroidImportance.HIGH,
+        sound: 'default',
+        vibrationPattern: VIBRATION_PATTERN,
+        pressAction: { id: 'default', launchActivity: 'default' },
+      },
+    },
+    {
+      type: TriggerType.TIMESTAMP,
+      timestamp: fireAt.getTime(),
+      alarmManager: { type: AlarmType.SET_ALARM_CLOCK },
+    }
+  );
+}
+
+export async function cancelTimerNotifications(): Promise<void> {
+  await notifee.cancelNotification(TIMER_ONGOING_ID);
+  await notifee.cancelTriggerNotification(TIMER_COMPLETE_ID);
+}
+
+// ─── 브리핑 (stage-6 §2) ────────────────────────────────
+
+/** 조용한 알림 1건. 내용은 예약 시점에 생성돼 문자열로 들어온다 (master §3.5) */
+export async function scheduleBriefing(body: string, fireAt: Date): Promise<string> {
+  return notifee.createTriggerNotification(
+    {
+      id: 'chrona-briefing',
+      title: '내일 브리핑',
+      body,
+      data: { chronaKind: 'briefing' },
+      android: {
+        channelId: CHANNELS.reminder,
+        style: { type: AndroidStyle.BIGTEXT, text: body },
+        pressAction: { id: 'briefing-open', launchActivity: 'default' },
+      },
+    },
+    {
+      type: TriggerType.TIMESTAMP,
+      timestamp: fireAt.getTime(),
+      alarmManager: { type: AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE },
+    }
+  );
+}
+
 // ─── 자정 앵커 (마스터 §3.6) ────────────────────────────
 
 /** 다음 자정(로컬)에 앵커 예약. fireAt 을 넘기면 그 시각으로 (디버그용) */
@@ -256,12 +369,22 @@ function nextMidnight(): Date {
  * 앵커 발화 처리: 재계산(Stage 0에선 로그만) → 자기 자신을 다음 자정으로 재예약 → 표시된 알림 제거.
  * Stage 3에서 recalc 본체가 이 자리에 들어온다.
  */
+let anchorRecalc: (() => Promise<unknown>) | null = null;
+
+/** index.js에서 rescheduleAll 주입 (rescheduler ↔ alarm 순환 import 방지) */
+export function setAnchorRecalc(fn: () => Promise<unknown>): void {
+  anchorRecalc = fn;
+}
+
 async function handleAnchorFired(notificationId: string | undefined): Promise<void> {
   console.log('[chrona] midnight anchor fired at', new Date().toISOString());
-  // TODO(Stage 3): 여기서 30건 재계산 실행 (마스터 §3.7)
-  await scheduleMidnightAnchor();
   if (notificationId) {
     await notifee.cancelNotification(notificationId);
+  }
+  if (anchorRecalc) {
+    await anchorRecalc(); // 재계산이 앵커 재예약까지 수행
+  } else {
+    await scheduleMidnightAnchor();
   }
 }
 
@@ -270,12 +393,6 @@ async function handleAnchorFired(notificationId: string | undefined): Promise<vo
 /** 알람 충돌 정책(§3.9): 새 알람 도착 시 이전에 표시 중인 알람을 전부 dismiss */
 async function overrideOlderAlarms(newId: string | undefined): Promise<void> {
   const displayed = await notifee.getDisplayedNotifications();
-  console.log(
-    '[chrona] overrideOlderAlarms newId=',
-    newId,
-    'displayed=',
-    displayed.map((n) => `${n.id}/${n.notification.android?.channelId}`)
-  );
   const olderAlarms = displayed.filter(
     (n) => n.notification.android?.channelId === CHANNELS.alarm && n.id !== newId
   );
@@ -289,7 +406,26 @@ async function handleEvent({ type, detail }: Event): Promise<void> {
   const notification = detail.notification;
   const kind = notification?.data?.chronaKind;
 
+  // 타이머 알림 액션 (앱 안 열고 동작 — stage-6 §1-3)
+  if (type === EventType.ACTION_PRESS) {
+    const actionId = detail.pressAction?.id;
+    if (actionId === 'timer-pause' || actionId === 'timer-resume' || actionId === 'timer-stop') {
+      const timerModule = await import('@/native/timer');
+      if (actionId === 'timer-pause') await timerModule.pauseTimer();
+      if (actionId === 'timer-resume') await timerModule.resumeTimer();
+      if (actionId === 'timer-stop') await timerModule.finishTimer(false);
+      return;
+    }
+  }
+
   if (type === EventType.DELIVERED) {
+    if (kind === 'timer-complete') {
+      // 완료: 세션 기록 + 상시 알림 정리 (완료 알람 3초 뒤 자동 정리)
+      const timerModule = await import('@/native/timer');
+      await timerModule.finishTimer(true);
+      setTimeout(() => void notifee.cancelNotification('chrona-timer-complete'), 3500);
+      return;
+    }
     if (kind === ANCHOR_KIND) {
       await handleAnchorFired(notification?.id);
       return;
@@ -325,7 +461,11 @@ function notifyAlarmDelivered(id: string | undefined, data: Record<string, unkno
 export function registerAlarmEngine(): void {
   // 포그라운드 서비스 runner: 알림이 살아있는 동안만 생존.
   // resolve하지 않는 Promise — stopForegroundService()로만 종료된다 (Stage 0 §1-7).
-  notifee.registerForegroundService(() => new Promise<void>(() => {}));
+  // 서비스 시작 시 자체 사운드 재생 — One UI가 채널 사운드를 삼키는 간헐 무음 보강.
+  notifee.registerForegroundService(() => {
+    void startAlarmSound();
+    return new Promise<void>(() => {});
+  });
 
   notifee.onBackgroundEvent(handleEvent);
   notifee.onForegroundEvent((event) => {
@@ -381,6 +521,10 @@ export async function openBatterySettings(): Promise<void> {
   await notifee.openBatteryOptimizationSettings();
 }
 
+export async function openNotificationSettings(): Promise<void> {
+  await notifee.openNotificationSettings();
+}
+
 function authorizationLabel(status: number): string {
   // AuthorizationStatus: -1 NOT_DETERMINED / 0 DENIED / 1 AUTHORIZED / 2 PROVISIONAL
   switch (status) {
@@ -402,5 +546,32 @@ function alarmSettingLabel(setting: number): string {
       return '거부됨 — 설정 필요';
     default:
       return '해당 없음';
+  }
+}
+
+let alarmPlayer: AudioPlayer | null = null;
+
+export async function startAlarmSound(): Promise<void> {
+  try {
+    if (alarmPlayer) return;
+    await setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true });
+     
+    alarmPlayer = createAudioPlayer(require('../../assets/sounds/alarm_default.wav'));
+    alarmPlayer.loop = true;
+    alarmPlayer.volume = 1;
+    alarmPlayer.play();
+  } catch (e) {
+    console.warn('[chrona] alarm sound start failed:', e);
+  }
+}
+
+export async function stopAlarmSound(): Promise<void> {
+  try {
+    if (!alarmPlayer) return;
+    alarmPlayer.pause();
+    alarmPlayer.release();
+    alarmPlayer = null;
+  } catch {
+    alarmPlayer = null;
   }
 }

@@ -14,6 +14,7 @@ import type { EventDraft, EventRow } from '../mappers';
 import { toDomainEvent, toEventInsert } from '../mappers';
 import { assertOnline } from '../net';
 import { supabase } from '../supabase';
+import { rescheduleDebounced } from '@/native/rescheduler';
 
 export type EventRange = { from: Date; to: Date; tz: string };
 
@@ -34,6 +35,8 @@ export function useEvents(range: EventRange) {
         .is('deleted_at', null)
         .or(
           [
+            // 반복 일정: 규칙만 저장돼 있으므로 range 필터 불가 — 항상 가져와 클라이언트에서 전개
+            `rrule.not.is.null`,
             // 시각 일정: 기간과 겹침
             `and(all_day.eq.false,starts_at.lte.${range.to.toISOString()},ends_at.gte.${range.from.toISOString()})`,
             // 종일 일정: date 문자열 비교 (시간대 무관 — master §7.2)
@@ -98,7 +101,10 @@ export function useCreateEvent() {
     onError: (_e, _v, ctx) => {
       ctx?.snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.allEvents() }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.allEvents() });
+      rescheduleDebounced(); // master §3.6 트리거 2 (CRUD)
+    },
   });
 }
 
@@ -130,7 +136,10 @@ export function useUpdateEvent() {
     onError: (_e, _v, ctx) => {
       ctx?.snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.allEvents() }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.allEvents() });
+      rescheduleDebounced();
+    },
   });
 }
 
@@ -157,6 +166,9 @@ export function useDeleteEvent() {
     onError: (_e, _v, ctx) => {
       ctx?.snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.allEvents() }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.allEvents() });
+      rescheduleDebounced();
+    },
   });
 }

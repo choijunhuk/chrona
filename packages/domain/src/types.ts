@@ -58,6 +58,15 @@ export type PeriodPreset = {
   endTime: string;
 };
 
+export type EventOverride = {
+  id: string;
+  eventId: string;
+  originalStart: Date;
+  newStart: Date | null;
+  newEnd: Date | null;
+  isCancelled: boolean;
+};
+
 export type Reminder = {
   id: string;
   eventId: string;
@@ -89,6 +98,7 @@ export type FocusSession = {
 
 export type AppSettings = {
   briefingEnabled: boolean;
+  ongoingEnabled: boolean;
   briefingTime: string; // 'HH:MM'
   defaultReminderOffset: number;
   snoozeMinutes: number;

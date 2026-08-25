@@ -1,2 +1,10 @@
+packages:
+  - 'packages/*'
+  - 'web'
 allowBuilds:
+  esbuild: true
   unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@expo/config-plugins@57.0.9'
+  - '@expo/require-utils@57.0.5'
+  - expo-sharing@57.0.15

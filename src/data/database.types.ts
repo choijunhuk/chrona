@@ -108,6 +108,7 @@ type FocusSessionRow = {
 
 type AppSettingsRow = {
   user_id: string;
+  ongoing_enabled: boolean;
   briefing_enabled: boolean;
   briefing_time: string;
   default_reminder_offset: number;
