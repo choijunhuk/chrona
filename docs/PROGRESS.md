@@ -72,3 +72,11 @@
 - 배포: Vercel 프로덕션 https://chrona-ebon.vercel.app (prebuilt 정적 — 원격 빌드는 workspace 의존성으로 불가)
 - 미결: Supabase Redirect URL에 배포 도메인 추가(사용자), 빠른 추가·아침 브리핑·점진 볼륨 실기기 검증, 기존 이월 항목(Doze 65분, 스누즈 소진, 알람음 교체)
 - 발견한 함정: ① 루트 tsconfig `include: **/*.ts`가 web/을 삼켜 typecheck 오염 — exclude 필수 ② Vercel 원격 빌드는 상위 폴더 workspace 참조 불가 — `--prebuilt`(Build Output API)로 우회 ③ vercel.json `buildCommand: null`은 프레임워크 감지에 덮임
+
+## Stage 12 — 약속 잡기 (when2meet, 2026-08-28)
+
+- 머지 커밋: `777ba35` (main)
+- 구현 요약: meet_polls/meet_responses(주최자 전용 RLS) + 익명 security definer RPC 2개(meet_get_poll/meet_submit_response — search_path='', public revoke, 이름·슬롯·인원 캡), domain/meet(슬롯·히트맵·최적슬롯, 테스트 4), 앱 /meet(생성·날짜칩·시간범위·공유시트·현황·확정→일정 생성), 웹 #/meet/<token>(로그인 게이트 앞, 이름+드래그 페인팅 그리드+히트맵, 주최자 확정 패널)
+- 검증: 테스트 92개 그린 / typecheck / lint / 익명 RPC curl 왕복 / RLS 직접 접근 차단 / 웹 프로덕션 실링크 렌더 / APK 기기 설치 / 웹 배포
+- 미결: 실사용 검증(친구 응답 시나리오), 슬롯 키 벽시계 규약 문서만 — 해외 참여자 tz 표시(YAGNI)
+- 발견한 함정: ① supabase CLI 미링크 시 psql 세션 풀러(aws-0-ap-northeast-2)로 마이그레이션 적용 가능 ② database.types.ts 수기 갱신 — 다음 `pnpm types` 재생성 시 meet 테이블 대조 필수 ③ security definer 함수는 search_path 고정 + execute revoke 없으면 공격면
