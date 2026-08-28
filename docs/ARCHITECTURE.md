@@ -235,3 +235,17 @@ app/(tabs)/             calendar + more(테마 스위치/디버그/로그아웃)
   단축키, 반복 회차 override 편집. domain + 순수 매퍼(@app-data/mappers)를 별칭으로 공유 — 중복 로직 0
 - 알람은 웹에서 안 울림 + "앱을 열어야 알람 갱신" 안내 (구조적 한계 명시)
 - 토큰 → CSS 변수 (prefers-color-scheme로 라이트/다크)
+
+### Stage 11 — 무료 운영 기능 팩 (2026-08-28)
+- **AI/유료 API 0 원칙**: 자연어 빠른 추가는 규칙 기반 파서(`domain/quick-add.ts`, 정규식+date-fns).
+  "3시 회의"류 무수식 1~7시는 오후 추정, 지난 시각은 내일로 이월
+- `.ics` 가져오기: `domain/ics.ts` 순수 파서(접힌 줄, VALUE=DATE, UTC/floating, RRULE의 UNTIL 분리) →
+  data 계층에서 Date 변환·bulk insert. DTEND;VALUE=DATE는 RFC대로 exclusive 처리(-1일, 시작일 클램프)
+- **기기 로컬 설정**(`data/local-settings.ts`): 아침 브리핑·점진 볼륨·시험기간 모드는 DB 마이그레이션 없이
+  AsyncStorage 단독 — 기기 1대 전제라 서버 동기화 불필요. headless 재계산에서도 읽음
+- 아침 브리핑: 저녁 브리핑과 같은 조용한 알림 경로, 별도 id(`chrona-briefing-morning`).
+  내용은 예약 시점 생성(master §3.5) — 자정 앵커 재계산이 매일 갱신 보장
+- 점진 볼륨: FGS 자체 재생 플레이어의 volume을 1초 간격 0.15→1.0 30초 램프. 채널 사운드는 램프 불가라
+  FGS 재생 구조(stage-3) 덕에 공짜로 얻은 기능
+- 자동 로컬 백업: 주1회 포그라운드 진입 시 문서 폴더에 최신+직전 2세대 보관. 실패는 조용히 무시
+- 시험기간 모드: 홈 D-day 창 3→7일 확장 (표시 계층만, 데이터 불변)
