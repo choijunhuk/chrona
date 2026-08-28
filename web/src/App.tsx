@@ -6,13 +6,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { EventDraft } from '@app-data/mappers';
 import {
+  WEEKDAY_LABELS,
   addDaysOnly,
+  addMonths,
+  asDateOnly,
   dDayLabel,
+  dayOfMonth,
   daysUntilDue,
   expandForDisplay,
   focusStreak,
   formatKoreanDate,
   fromDateOnly,
+  monthGrid,
+  monthOf,
   plannedVsActual,
   toDateOnly,
   todayDateOnly,
@@ -20,6 +26,7 @@ import {
   type ChronaEvent,
   type DateOnly,
   type DisplayItem,
+  type MonthGridCell,
 } from '@chrona/domain';
 
 import {
@@ -47,6 +54,11 @@ type PanelState =
   | { mode: 'new'; day: DateOnly; startMin: number; endMin: number }
   | { mode: 'edit'; item: DisplayItem }
   | null;
+
+type ViewMode = 'week' | 'month';
+
+/** 월간 셀에 접히지 않고 들어가는 일정 수 — 넘치면 '+N' */
+const MONTH_CELL_ITEMS = 3;
 
 export default function App() {
   const { data: session, isPending } = useSession();
@@ -95,17 +107,30 @@ function Auth() {
 function Calendar() {
   const today = todayDateOnly(TZ);
   const [anchor, setAnchor] = useState<DateOnly>(today);
+  const [view, setView] = useState<ViewMode>('week');
   const [panel, setPanel] = useState<PanelState>(null);
   const [drag, setDrag] = useState<DragState>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
   const days = useMemo(() => weekOf(anchor), [anchor]);
+  const grid = useMemo(() => {
+    const { year, month } = monthOf(anchor);
+    return monthGrid(year, month);
+  }, [anchor]);
+
+  // 전개 범위 = 지금 보이는 날짜 전부 (표시 범위 한정 — domain DoD)
+  const visibleDays = useMemo(
+    () => (view === 'week' ? days : grid.flat().map((c) => c.date)),
+    [view, days, grid]
+  );
   const range = useMemo(
     () => ({
-      from: fromDateOnly(days[0], TZ),
-      to: new Date(fromDateOnly(days[6], TZ).getTime() + 86400_000 - 1),
+      from: fromDateOnly(visibleDays[0], TZ),
+      to: new Date(
+        fromDateOnly(visibleDays[visibleDays.length - 1], TZ).getTime() + 86400_000 - 1
+      ),
     }),
-    [days]
+    [visibleDays]
   );
 
   const { data: events } = useEvents(range);
@@ -119,30 +144,79 @@ function Calendar() {
     [events, overrides, range]
   );
 
-  // 주간 통계 요약 (검증 11 — 앱과 같은 domain 함수)
+  // 날짜별 묶음 — 월간 셀이 소비한다. 종일은 걸치는 날 전부에 실린다 (종일 행과 같은 규칙)
+  const byDay = useMemo(() => {
+    const map = new Map<DateOnly, DisplayItem[]>();
+    const push = (d: DateOnly, it: DisplayItem) => {
+      const cur = map.get(d);
+      if (cur) cur.push(it);
+      else map.set(d, [it]);
+    };
+    const first = visibleDays[0];
+    const last = visibleDays[visibleDays.length - 1];
+    for (const it of items) {
+      if (it.startDate) {
+        // 보이는 범위로 잘라서 순회 — 장기 종일 일정이 범위 밖까지 도는 것 방지
+        const end = it.endDate ?? it.startDate;
+        for (
+          let d = it.startDate < first ? first : it.startDate;
+          d <= (end > last ? last : end);
+          d = addDaysOnly(d, 1)
+        ) {
+          push(d, it);
+        }
+      } else if (it.start) {
+        push(toDateOnly(it.start, TZ), it);
+      }
+    }
+    return map;
+  }, [items, visibleDays]);
+
+  // 통계 요약 (검증 11 — 앱과 같은 domain 함수). 월간이면 그 달의 날짜만 센다
+  const statDays = useMemo(
+    () => (view === 'week' ? days : grid.flat().filter((c) => c.inMonth).map((c) => c.date)),
+    [view, days, grid]
+  );
   const statsLine = useMemo(() => {
     const occ = items
       .filter((it) => it.start && it.end && it.event.kind !== 'task')
       .map((it) => ({ categoryId: it.event.categoryId, start: it.start!, end: it.end }));
-    const daily = plannedVsActual(occ, [], days, TZ);
+    const daily = plannedVsActual(occ, [], statDays, TZ);
     const planned = daily.reduce((a, d) => a + d.plannedMinutes, 0);
-    return `이번 주 계획 ${Math.floor(planned / 60)}시간 ${planned % 60}분`;
-  }, [items, days]);
+    const label = view === 'week' ? '이번 주' : '이번 달';
+    return `${label} 계획 ${Math.floor(planned / 60)}시간 ${planned % 60}분`;
+  }, [items, statDays, view]);
+
+  const goPrev = useCallback(
+    () => setAnchor((a) => (view === 'week' ? addDaysOnly(a, -7) : shiftMonth(a, -1))),
+    [view]
+  );
+  const goNext = useCallback(
+    () => setAnchor((a) => (view === 'week' ? addDaysOnly(a, 7) : shiftMonth(a, 1))),
+    [view]
+  );
+
+  /** 월간에서 날짜를 고르면 그 주의 주간 뷰로 (앱 캘린더의 월→주 전환과 같은 동작) */
+  const openWeekOf = (d: DateOnly) => {
+    setAnchor(d);
+    setView('week');
+  };
 
   // 단축키 (stage-10 §1-4)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
       if (e.key === 't') setAnchor(today);
-      if (e.key === 'ArrowLeft') setAnchor((a) => addDaysOnly(a, -7));
-      if (e.key === 'ArrowRight') setAnchor((a) => addDaysOnly(a, 7));
+      if (e.key === 'ArrowLeft') goPrev();
+      if (e.key === 'ArrowRight') goNext();
+      if (e.key === 'm') setView((v) => (v === 'week' ? 'month' : 'week'));
       if (e.key === 'n')
         setPanel({ mode: 'new', day: today, startMin: 9 * 60, endMin: 10 * 60 });
       if (e.key === 'Escape') setPanel(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [today]);
+  }, [today, goPrev, goNext]);
 
   // ── 드래그 계산 ─────────────────────────────────────
   const minFromY = (clientY: number): number => {
@@ -219,11 +293,32 @@ function Calendar() {
     <div className="app">
       <div className="main">
         <div className="topbar">
-          <h1>{formatKoreanDate(days[0])} 주</h1>
-          <button className="btn" onClick={() => setAnchor(addDaysOnly(anchor, -7))}>‹</button>
+          <h1>
+            {view === 'week'
+              ? `${formatKoreanDate(days[0])} 주`
+              : `${monthOf(anchor).year}년 ${monthOf(anchor).month}월`}
+          </h1>
+          <button className="btn" onClick={goPrev}>‹</button>
           <button className="btn" onClick={() => setAnchor(today)}>오늘</button>
-          <button className="btn" onClick={() => setAnchor(addDaysOnly(anchor, 7))}>›</button>
-          <span className="hint">n 새 일정 · t 오늘 · ← → 주 이동</span>
+          <button className="btn" onClick={goNext}>›</button>
+          <div className="seg">
+            <button
+              className={`btn${view === 'week' ? ' primary' : ''}`}
+              onClick={() => setView('week')}
+            >
+              주간
+            </button>
+            <button
+              className={`btn${view === 'month' ? ' primary' : ''}`}
+              onClick={() => setView('month')}
+            >
+              월간
+            </button>
+          </div>
+          <span className="hint">
+            n 새 일정 · t 오늘 · m 주/월 ·{' '}
+            {view === 'week' ? '← → 주 이동' : '← → 달 이동 · 날짜 클릭 = 그 주 보기'}
+          </span>
           <div className="spacer" />
           <span className="hint">{statsLine}</span>
           <button className="btn" onClick={() => void supabase.auth.signOut().then(() => location.reload())}>
@@ -234,6 +329,17 @@ function Calendar() {
           ⏰ 알람은 앱에서만 울립니다. 웹에서 바꾼 일정은 앱을 한 번 열어야 알람에 반영됩니다.
         </div>
 
+        {view === 'month' ? (
+          <MonthView
+            grid={grid}
+            today={today}
+            byDay={byDay}
+            categories={categories ?? []}
+            onPickDay={openWeekOf}
+            onPickItem={(item) => setPanel({ mode: 'edit', item })}
+          />
+        ) : (
+        <>
         {/* 종일 행 */}
         <div className="alldayrow">
           <div />
@@ -320,6 +426,8 @@ function Calendar() {
             </div>
           ))}
         </div>
+        </>
+        )}
       </div>
 
       {panel && (
@@ -329,6 +437,86 @@ function Calendar() {
           onClose={() => setPanel(null)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * 월간 격자 (6주 고정 — domain monthGrid). 셀 클릭은 그 주의 주간 뷰로
+ * (앱 캘린더의 월→주 전환과 같다). 일정 칩 클릭은 편집 — 종일 행 칩과 같은 동작.
+ */
+function MonthView({
+  grid,
+  today,
+  byDay,
+  categories,
+  onPickDay,
+  onPickItem,
+}: {
+  grid: MonthGridCell[][];
+  today: DateOnly;
+  byDay: Map<DateOnly, DisplayItem[]>;
+  categories: { id: string; name: string; color: string }[];
+  onPickDay: (d: DateOnly) => void;
+  onPickItem: (item: DisplayItem) => void;
+}) {
+  return (
+    <div className="month">
+      <div className="monthhead">
+        {WEEKDAY_LABELS.map((w) => (
+          <div key={w}>{w}</div>
+        ))}
+      </div>
+      <div className="monthgrid">
+        {grid.map((week, wi) => (
+          <div key={wi} className="monthweek">
+            {week.map((cell) => {
+              const dayItems = byDay.get(cell.date) ?? [];
+              const shown = dayItems.slice(0, MONTH_CELL_ITEMS);
+              const overflow = dayItems.length - shown.length;
+              return (
+                <div
+                  key={cell.date}
+                  className={`mcell${cell.inMonth ? '' : ' out'}${cell.date === today ? ' today' : ''}`}
+                  onClick={() => onPickDay(cell.date)}
+                >
+                  <div className="n">{dayOfMonth(cell.date)}</div>
+                  {shown.map((it, i) => {
+                    const color = colorOf(it.event, categories);
+                    const allDay = !!it.startDate;
+                    return (
+                      <div
+                        key={`${it.event.id}-${i}`}
+                        className={`mchip${allDay ? ' allday' : ''}`}
+                        style={
+                          allDay
+                            ? {
+                                background: `color-mix(in srgb, ${color} 18%, var(--surface))`,
+                                borderLeftColor: color,
+                              }
+                            : undefined
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onPickItem(it);
+                        }}
+                      >
+                        {!allDay && <span className="dot" style={{ background: color }} />}
+                        <span className="t">
+                          {it.event.kind === 'task'
+                            ? `${dDayLabel(daysUntilDue(it.event.dueAt ?? new Date(), new Date(), TZ))} ${it.event.title}`
+                            : it.event.title}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {overflow > 0 && <div className="more">+{overflow}</div>}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -481,6 +669,12 @@ function EditorPanel({
 }
 
 // ── 헬퍼 ────────────────────────────────────────────────
+/** 이웃 달의 1일 — 월간 이동 후 주간으로 돌아가도 앵커가 그 달 안에 있게 한다 */
+function shiftMonth(a: DateOnly, delta: number): DateOnly {
+  const { year, month } = monthOf(a);
+  const n = addMonths(year, month, delta);
+  return asDateOnly(`${n.year}-${String(n.month).padStart(2, '0')}-01`);
+}
 function minutesOfDay(d: Date): number {
   return d.getHours() * 60 + d.getMinutes(); // 웹은 브라우저 로컬 = KST 가정 (fixedTimezone 미지원 안내)
 }
