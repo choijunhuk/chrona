@@ -7,6 +7,7 @@ import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { handleAuthDeepLink, useSession } from '@/data/auth';
+import { autoBackupIfDue } from '@/data/backup';
 import { initNetListener } from '@/data/net';
 import { QueryProvider } from '@/data/query';
 import { serializeAlarmPayload } from '@/domain/alarm-payload';
@@ -78,6 +79,7 @@ function Root() {
       await rescheduleAll();
       await maybeWeeklyCheck();
       await restoreTimer(); // 진행 중이던 타이머 복원 (stage-6)
+      void autoBackupIfDue(); // 주1회 로컬 자동 백업 (stage-11) — 실패해도 무시
     })();
 
     const unsubscribeAlarm = subscribeAlarmDelivered((notificationId, payload) => {
@@ -92,6 +94,7 @@ function Root() {
       if (state === 'active') {
         void rescheduleAll();
         void maybeWeeklyCheck(); // 주1회 권한 재확인 (master §4.2)
+        void autoBackupIfDue();
       }
     });
 

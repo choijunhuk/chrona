@@ -1,14 +1,21 @@
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, ToastAndroid, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Constants from 'expo-constants';
 
 import { signOut } from '@/data/auth';
-import { exportBackup, exportIcs, importBackup } from '@/data/backup';
+import { exportBackup, exportIcs, importBackup, importIcs } from '@/data/backup';
 import { useSettings, useUpdateSettings } from '@/data/hooks/settings';
+import {
+  getLocalSettings,
+  localSettingsCache,
+  setLocalSettings,
+  type LocalSettings,
+} from '@/data/local-settings';
+import { rescheduleDebounced } from '@/native/rescheduler';
 import { AppText } from '@/ui/components/text';
 import { haptics, hapticsEnabled, setHapticsEnabled } from '@/ui/components/haptics';
 import { useTheme } from '@/ui/theme';
@@ -17,7 +24,19 @@ import { radius, spacing, type ThemeColors } from '@/ui/tokens';
 // Stage 2: 테마/디버그/로그아웃만. 통계·브리핑·권한·백업은 해당 스테이지에서 (master §8)
 export default function More() {
   const [pickingBriefing, setPickingBriefing] = useState(false);
+  const [pickingMorning, setPickingMorning] = useState(false);
   const [hapticsOn, setHapticsOn] = useState(hapticsEnabled());
+  const [localS, setLocalS] = useState<LocalSettings>(localSettingsCache());
+  useEffect(() => {
+    void getLocalSettings().then(setLocalS);
+  }, []);
+  const patchLocal = (patch: Partial<LocalSettings>, reschedule = false) => {
+    haptics.selection();
+    void setLocalSettings(patch).then((next) => {
+      setLocalS(next);
+      if (reschedule) rescheduleDebounced();
+    });
+  };
   const { colors, mode, setMode } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
@@ -68,6 +87,16 @@ export default function More() {
           <Switch
             value={isDark}
             onValueChange={toggleTheme}
+            trackColor={{ true: colors.accent, false: colors.border }}
+            thumbColor={colors.white}
+          />
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <AppText>시험기간 모드</AppText>
+          <Switch
+            value={localS.examMode}
+            onValueChange={(v) => patchLocal({ examMode: v })}
             trackColor={{ true: colors.accent, false: colors.border }}
             thumbColor={colors.white}
           />
@@ -128,6 +157,30 @@ export default function More() {
           <AppText>캘린더 내보내기 (.ics)</AppText>
           <AppText color="textDim">›</AppText>
         </Pressable>
+        <View style={styles.divider} />
+        <Pressable
+          style={styles.row}
+          onPress={() =>
+            Alert.alert('캘린더 가져오기', '.ics 파일의 일정을 새 일정으로 추가합니다. 계속할까요?', [
+              { text: '취소', style: 'cancel' },
+              {
+                text: '가져오기',
+                onPress: () =>
+                  void importIcs()
+                    .then((r) => {
+                      if (r) {
+                        ToastAndroid.show(`${r.imported}건 가져옴`, ToastAndroid.LONG);
+                        rescheduleDebounced();
+                      }
+                    })
+                    .catch((e) => ToastAndroid.show(String(e), ToastAndroid.LONG)),
+              },
+            ])
+          }
+        >
+          <AppText>캘린더 가져오기 (.ics)</AppText>
+          <AppText color="textDim">›</AppText>
+        </Pressable>
       </View>
 
       <AppText variant="micro" color="textDim" style={styles.sectionLabel}>
@@ -167,6 +220,35 @@ export default function More() {
         </View>
         <View style={styles.divider} />
         <View style={styles.row}>
+          <AppText>아침 브리핑</AppText>
+          <Switch
+            value={localS.morningBriefingEnabled}
+            onValueChange={(v) => patchLocal({ morningBriefingEnabled: v }, true)}
+            trackColor={{ true: colors.accent, false: colors.border }}
+            thumbColor={colors.white}
+          />
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <AppText>아침 브리핑 시각</AppText>
+          <Pressable onPress={() => setPickingMorning(true)}>
+            <AppText color="accent" nums>
+              {localS.morningBriefingTime}
+            </AppText>
+          </Pressable>
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <AppText>점진적 볼륨 (30초)</AppText>
+          <Switch
+            value={localS.gradualVolume}
+            onValueChange={(v) => patchLocal({ gradualVolume: v })}
+            trackColor={{ true: colors.accent, false: colors.border }}
+            thumbColor={colors.white}
+          />
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
           <AppText>오늘 일정 상시 알림</AppText>
           <Switch
             value={settings?.ongoingEnabled ?? false}
@@ -186,6 +268,31 @@ export default function More() {
           <AppText color="textDim">›</AppText>
         </Pressable>
       </View>
+
+      {pickingMorning && (
+        <DateTimePicker
+          value={(() => {
+            const d = new Date();
+            const [h, m] = localS.morningBriefingTime.split(':').map(Number);
+            d.setHours(h, m, 0, 0);
+            return d;
+          })()}
+          mode="time"
+          onChange={(e: DateTimePickerEvent, d?: Date) => {
+            setPickingMorning(false);
+            if (e.type === 'set' && d) {
+              patchLocal(
+                {
+                  morningBriefingTime: `${String(d.getHours()).padStart(2, '0')}:${String(
+                    d.getMinutes()
+                  ).padStart(2, '0')}`,
+                },
+                true
+              );
+            }
+          }}
+        />
+      )}
 
       {pickingBriefing && (
         <DateTimePicker
