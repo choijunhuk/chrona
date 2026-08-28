@@ -249,3 +249,14 @@ app/(tabs)/             calendar + more(테마 스위치/디버그/로그아웃)
   FGS 재생 구조(stage-3) 덕에 공짜로 얻은 기능
 - 자동 로컬 백업: 주1회 포그라운드 진입 시 문서 폴더에 최신+직전 2세대 보관. 실패는 조용히 무시
 - 시험기간 모드: 홈 D-day 창 3→7일 확장 (표시 계층만, 데이터 불변)
+
+### Stage 12 — 약속 잡기 (when2meet, 2026-08-28)
+- **익명 접근 모델**: 1인용 RLS를 깨지 않고 타인 응답을 받기 위해 테이블은 주최자 전용으로
+  잠그고, 익명은 security definer RPC 2개(`meet_get_poll`/`meet_submit_response`)로만 통과.
+  `set search_path=''`, public에서 execute revoke 후 anon/authenticated에만 grant.
+  방어: 이름 1~20자, slots ≤500, poll당 응답 ≤50 (그 이상 rate limit은 개인용 YAGNI)
+- 슬롯 키 'YYYY-MM-DDTHH:MM'은 **tz 변환 없는 벽시계 좌표** — 참여자 전원이 같은 시간을
+  보는 when2meet 규약. 확정 시점에만 Asia/Seoul로 해석해 UTC 일정으로 변환
+- 웹 `#/meet/<token>` 해시 라우트는 로그인 게이트보다 앞 — 계정 없이 열리는 유일한 화면
+- 히트맵·최적 슬롯 집계는 `domain/meet.ts` 순수 함수 (앱 현황 화면·웹 그리드 공유)
+- 앱은 생성·공유·확정 중심, 그리드 페인팅 UI는 웹 전용 (마우스/터치 드래그가 웹에서 더 좋음)

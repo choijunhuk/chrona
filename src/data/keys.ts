@@ -6,4 +6,6 @@ export const qk = {
   categories: () => ['categories'] as const,
   settings: () => ['settings'] as const,
   periodPresets: () => ['periodPresets'] as const,
+  meetPolls: () => ['meetPolls'] as const,
+  meetResponses: (pollId: string) => ['meetResponses', pollId] as const,
 } as const;

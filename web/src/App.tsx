@@ -30,6 +30,7 @@ import {
 } from '@chrona/domain';
 
 import {
+  emptyDraft,
   useCategories,
   useDeleteEvent,
   useEvents,
@@ -38,6 +39,7 @@ import {
   useSession,
   useUpsertOverride,
 } from './hooks';
+import { MeetPage, MeetPanel, meetTokenFromHash } from './Meet';
 import { supabase } from './supabase';
 
 const TZ = 'Asia/Seoul';
@@ -61,10 +63,24 @@ type ViewMode = 'week' | 'month';
 const MONTH_CELL_ITEMS = 3;
 
 export default function App() {
+  const hash = useHash();
   const { data: session, isPending } = useSession();
+  // 참여자 화면은 로그인 게이트 앞에 선다 — 계정 없이 열려야 하는 유일한 화면
+  const meetToken = meetTokenFromHash(hash);
+  if (meetToken) return <MeetPage token={meetToken} />;
   if (isPending) return null;
   if (!session) return <Auth />;
   return <Calendar />;
+}
+
+function useHash(): string {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const on = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+  return hash;
 }
 
 function Auth() {
@@ -112,6 +128,7 @@ function Calendar() {
   const [anchor, setAnchor] = useState<DateOnly>(today);
   const [view, setView] = useState<ViewMode>('week');
   const [panel, setPanel] = useState<PanelState>(null);
+  const [meetOpen, setMeetOpen] = useState(false);
   const [drag, setDrag] = useState<DragState>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -324,6 +341,12 @@ function Calendar() {
           </span>
           <div className="spacer" />
           <span className="hint">{statsLine}</span>
+          <button
+            className={`btn${meetOpen ? ' primary' : ''}`}
+            onClick={() => setMeetOpen((v) => !v)}
+          >
+            약속
+          </button>
           <button className="btn" onClick={() => void supabase.auth.signOut().then(() => location.reload())}>
             로그아웃
           </button>
@@ -440,6 +463,7 @@ function Calendar() {
           onClose={() => setPanel(null)}
         />
       )}
+      {meetOpen && <MeetPanel onClose={() => setMeetOpen(false)} />}
     </div>
   );
 }
@@ -695,26 +719,4 @@ function colorOf(e: ChronaEvent, categories: { id: string; color: string }[]): s
 function toDraft(e: ChronaEvent): EventDraft {
   const { id: _id, updatedAt: _u, ...rest } = e;
   return rest;
-}
-function emptyDraft(): EventDraft {
-  return {
-    kind: 'schedule',
-    title: '',
-    memo: null,
-    categoryId: null,
-    color: null,
-    allDay: false,
-    startsAt: null,
-    endsAt: null,
-    startDate: null,
-    endDate: null,
-    rrule: null,
-    rruleUntil: null,
-    dueAt: null,
-    isDone: false,
-    doneAt: null,
-    semesterId: null,
-    location: null,
-    professor: null,
-  };
 }
