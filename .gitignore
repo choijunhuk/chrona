@@ -57,3 +57,6 @@ ios/
 # secrets in local verify script
 !.env.local.example
 web/.env
+
+# Vercel
+.vercel/
