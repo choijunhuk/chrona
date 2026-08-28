@@ -63,3 +63,12 @@
 - 테스트 74개 전부 통과 (task 12 / recurrence 9 / rrule-ui 3 / stats 8 추가). 앱 release·웹 vite 빌드 성공
 - 스펙 이탈(사유는 ARCHITECTURE): 통계 차트 SVG(Skia 미채택), 위젯 브릿지 파일 기반, 모노레포 루트 유지+별칭 보존, 브리핑 주말 토글 미구현
 - 실기기 검증: 자율 검증분(빌드·prebuild 생존·재계산 파이프라인) 완료. 나머지는 사람 검증 체크리스트로 이관
+
+## Stage 11 — 무료 운영 기능 팩 (2026-08-28)
+
+- 머지 커밋: `fb87220` (main)
+- 구현 요약: .ics 가져오기(RFC 5545 파서, UNTIL 분리, exclusive DTEND 보정), 자연어 빠른 추가(규칙 기반 한국어 파서 — AI/유료 API 0), 주1회 자동 로컬 백업(2세대), 아침 브리핑(로컬 설정, 자정 앵커 갱신), 점진 볼륨(30초 램프), 시험기간 모드(D-day 3→7일), 웹 월간 뷰(domain monthGrid 재사용). README 신규
+- 검증: 테스트 88개(신규 14) / typecheck / lint / 릴리스 APK 빌드·기기 설치 / 웹 빌드 전부 그린
+- 배포: Vercel 프로덕션 https://chrona-ebon.vercel.app (prebuilt 정적 — 원격 빌드는 workspace 의존성으로 불가)
+- 미결: Supabase Redirect URL에 배포 도메인 추가(사용자), 빠른 추가·아침 브리핑·점진 볼륨 실기기 검증, 기존 이월 항목(Doze 65분, 스누즈 소진, 알람음 교체)
+- 발견한 함정: ① 루트 tsconfig `include: **/*.ts`가 web/을 삼켜 typecheck 오염 — exclude 필수 ② Vercel 원격 빌드는 상위 폴더 workspace 참조 불가 — `--prebuilt`(Build Output API)로 우회 ③ vercel.json `buildCommand: null`은 프레임워크 감지에 덮임
