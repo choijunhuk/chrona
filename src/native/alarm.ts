@@ -313,11 +313,15 @@ export async function cancelTimerNotifications(): Promise<void> {
 // ─── 브리핑 (stage-6 §2) ────────────────────────────────
 
 /** 조용한 알림 1건. 내용은 예약 시점에 생성돼 문자열로 들어온다 (master §3.5) */
-export async function scheduleBriefing(body: string, fireAt: Date): Promise<string> {
+export async function scheduleBriefing(
+  body: string,
+  fireAt: Date,
+  opts?: { id?: string; title?: string }
+): Promise<string> {
   return notifee.createTriggerNotification(
     {
-      id: 'chrona-briefing',
-      title: '내일 브리핑',
+      id: opts?.id ?? 'chrona-briefing',
+      title: opts?.title ?? '내일 브리핑',
       body,
       data: { chronaKind: 'briefing' },
       android: {
@@ -550,22 +554,50 @@ function alarmSettingLabel(setting: number): string {
 }
 
 let alarmPlayer: AudioPlayer | null = null;
+let volumeRamp: ReturnType<typeof setInterval> | null = null;
+
+// 점진 볼륨 (stage-11): 0.15 → 1.0 을 30초에 걸쳐. 기상 알람 체감 개선
+const RAMP_START = 0.15;
+const RAMP_SECONDS = 30;
 
 export async function startAlarmSound(): Promise<void> {
   try {
     if (alarmPlayer) return;
+    const { getLocalSettings } = await import('@/data/local-settings');
+    const gradual = (await getLocalSettings()).gradualVolume;
     await setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true });
-     
+
     alarmPlayer = createAudioPlayer(require('../../assets/sounds/alarm_default.wav'));
     alarmPlayer.loop = true;
-    alarmPlayer.volume = 1;
+    alarmPlayer.volume = gradual ? RAMP_START : 1;
     alarmPlayer.play();
+
+    if (gradual) {
+      let elapsed = 0;
+      volumeRamp = setInterval(() => {
+        elapsed += 1;
+        if (!alarmPlayer || elapsed >= RAMP_SECONDS) {
+          if (alarmPlayer) alarmPlayer.volume = 1;
+          stopVolumeRamp();
+          return;
+        }
+        alarmPlayer.volume = RAMP_START + (1 - RAMP_START) * (elapsed / RAMP_SECONDS);
+      }, 1000);
+    }
   } catch (e) {
     console.warn('[chrona] alarm sound start failed:', e);
   }
 }
 
+function stopVolumeRamp(): void {
+  if (volumeRamp) {
+    clearInterval(volumeRamp);
+    volumeRamp = null;
+  }
+}
+
 export async function stopAlarmSound(): Promise<void> {
+  stopVolumeRamp();
   try {
     if (!alarmPlayer) return;
     alarmPlayer.pause();

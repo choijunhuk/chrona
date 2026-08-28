@@ -4,11 +4,13 @@
  */
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, TextInput, ToastAndroid, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useEvents } from '@/data/hooks/events';
+import { getLocalSettings, localSettingsCache } from '@/data/local-settings';
+import { useCreateEvent, useEvents } from '@/data/hooks/events';
+import { parseQuickAdd, quickAddPreview } from '@/domain/quick-add';
 import { useOverrides } from '@/data/hooks/overrides';
 import { expandForDisplay } from '@/domain/display';
 import { useCategories } from '@/data/hooks/settings';
@@ -42,13 +44,55 @@ export function HomeScreen() {
 
   // 1분 tick — 포커스 중에만 (stage-4 §1-5, master §6)
   const [now, setNow] = useState(() => new Date());
+  const [examMode, setExamMode] = useState(() => localSettingsCache().examMode);
   useFocusEffect(
     useCallback(() => {
       setNow(new Date());
+      void getLocalSettings().then((s) => setExamMode(s.examMode));
       const t = setInterval(() => setNow(new Date()), 60_000);
       return () => clearInterval(t);
     }, [])
   );
+
+  // 빠른 추가 (stage-11) — 규칙 기반 파서, 네트워크·AI 없음
+  const [quickText, setQuickText] = useState('');
+  const createEvent = useCreateEvent();
+  const quickParsed = useMemo(
+    () => (quickText.trim() ? parseQuickAdd(quickText, now, TZ) : null),
+    [quickText, now]
+  );
+  const submitQuickAdd = () => {
+    const r = parseQuickAdd(quickText, new Date(), TZ);
+    if (!r) return;
+    haptics.success();
+    createEvent.mutate(
+      {
+        kind: 'schedule',
+        title: r.title,
+        memo: null,
+        categoryId: null,
+        color: null,
+        allDay: r.allDay,
+        startsAt: r.start,
+        endsAt: r.start ? new Date(r.start.getTime() + 3600_000) : null,
+        startDate: r.startDate,
+        endDate: r.startDate,
+        rrule: null,
+        rruleUntil: null,
+        dueAt: null,
+        isDone: false,
+        doneAt: null,
+        semesterId: null,
+        location: null,
+        professor: null,
+      },
+      {
+        onSuccess: () => ToastAndroid.show(`추가됨: ${r.title}`, ToastAndroid.SHORT),
+        onError: (e) => ToastAndroid.show(String(e), ToastAndroid.LONG),
+      }
+    );
+    setQuickText('');
+  };
 
   const today = todayDateOnly(TZ);
   // now는 분 단위 갱신 — range는 시간 경계로 고정해 쿼리키 폭주 방지
@@ -87,7 +131,9 @@ export function HomeScreen() {
         .sort((a, b) => a.days - b.days),
     [tasks, now]
   );
-  const urgentTasks = openTasks.filter((t) => t.days <= 3);
+  // 시험기간 모드: 마감 임박 창을 3일 → 7일로 확장 (stage-11)
+  const urgentWindow = examMode ? 7 : 3;
+  const urgentTasks = openTasks.filter((t) => t.days <= urgentWindow);
 
   const taskCountToday = openTasks.filter((t) => t.days <= 0).length;
 
@@ -108,7 +154,35 @@ export function HomeScreen() {
         <AppText variant="display">{formatKoreanDate(today)}</AppText>
         <AppText variant="caption" color="textSub" nums>
           오늘 일정 {todayTimed.length}개 · 과제 {taskCountToday > 0 ? `${taskCountToday}개 마감` : `${openTasks.length}개 진행 중`}
+          {examMode ? ' · 📝 시험기간' : ''}
         </AppText>
+      </Animated.View>
+
+      {/* 빠른 추가 (stage-11) */}
+      <Animated.View entering={FadeInDown.delay(20)}>
+        <View style={styles.quickRow}>
+          <TextInput
+            style={styles.quickInput}
+            value={quickText}
+            onChangeText={setQuickText}
+            onSubmitEditing={submitQuickAdd}
+            placeholder='빠른 추가 — "내일 오후 3시 팀플"'
+            placeholderTextColor={colors.textDim}
+            returnKeyType="done"
+          />
+          {quickText.trim().length > 0 && (
+            <Pressable hitSlop={8} onPress={submitQuickAdd}>
+              <AppText color="accent" style={styles.quickSubmit}>
+                추가
+              </AppText>
+            </Pressable>
+          )}
+        </View>
+        {quickParsed && (
+          <AppText variant="micro" color="textDim" nums style={styles.quickPreview}>
+            → {quickParsed.title} · {quickAddPreview(quickParsed, TZ)}
+          </AppText>
+        )}
       </Animated.View>
 
       {/* 다음 일정 */}
@@ -145,7 +219,7 @@ export function HomeScreen() {
       {urgentTasks.length > 0 && (
         <Animated.View entering={FadeInDown.delay(80)} style={styles.section}>
           <AppText variant="micro" color="textDim" style={styles.sectionLabel}>
-            마감 임박
+            {examMode ? '시험기간 · 마감 임박 (7일)' : '마감 임박'}
           </AppText>
           <View style={styles.chipWrap}>
             {urgentTasks.slice(0, 6).map(({ task, days }) => {
@@ -265,6 +339,17 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
     },
     section: { gap: spacing.sm },
+    quickRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.lg,
+      gap: spacing.md,
+    },
+    quickInput: { flex: 1, color: colors.text, paddingVertical: spacing.md, fontSize: 15 },
+    quickSubmit: { fontWeight: '600' },
+    quickPreview: { marginTop: spacing.xs, marginLeft: spacing.xs },
     sectionLabel: { letterSpacing: 2 },
     card: {
       backgroundColor: colors.surface,

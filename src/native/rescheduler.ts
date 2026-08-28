@@ -11,6 +11,7 @@ import {
   expandOccurrences,
   expandStandaloneAlarms,
 } from '@/domain/schedule';
+import { getLocalSettings } from '@/data/local-settings';
 import { readRescheduleSource, refreshRescheduleSource } from '@/data/reschedule-source';
 import { pushWidgetData } from '@/native/widget';
 import {
@@ -109,6 +110,44 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
       lines.push(`마감 임박: ${dueSoon.map((e) => e.title).slice(0, 2).join(', ')}`);
     }
     await scheduleBriefing(lines.join('\n'), briefAt);
+  }
+
+  // 아침 브리핑 (stage-11): 기기 로컬 설정. 저녁 브리핑과 같은 조용한 알림, 내용은 그날 기준
+  const local = await getLocalSettings();
+  if (local.morningBriefingEnabled) {
+    const [mh, mm] = local.morningBriefingTime.split(':').map(Number);
+    const morningAt = new Date(now);
+    morningAt.setHours(mh, mm, 0, 0);
+    if (morningAt.getTime() <= now.getTime()) morningAt.setDate(morningAt.getDate() + 1);
+
+    const dayStart = new Date(morningAt);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart.getTime() + 86400_000);
+    const todays = occurrences
+      .filter((o) => o.start >= morningAt && o.start < dayEnd && o.start >= dayStart)
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+    const dueToday = source.events.filter(
+      (e) =>
+        e.kind === 'task' &&
+        !e.isDone &&
+        e.dueAt &&
+        e.dueAt >= dayStart &&
+        e.dueAt < dayEnd
+    );
+    const mLines: string[] = [];
+    mLines.push(
+      todays.length === 0
+        ? '오늘은 일정이 없어요'
+        : `오늘 일정 ${todays.length}개 · 첫 일정 ${formatTimeLabel(todays[0].start, tz)}`
+    );
+    if (todays.length > 0) mLines.push(todays.slice(0, 3).map((o) => o.title).join(' · '));
+    if (dueToday.length > 0) {
+      mLines.push(`오늘 마감: ${dueToday.map((e) => e.title).slice(0, 2).join(', ')}`);
+    }
+    await scheduleBriefing(mLines.join('\n'), morningAt, {
+      id: 'chrona-briefing-morning',
+      title: '오늘 브리핑',
+    });
   }
 
   // 상시 알림(③): 오늘 남은 일정 요약 — CRUD·자정 시점에만 갱신 (master §6)

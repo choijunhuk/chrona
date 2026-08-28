@@ -4,6 +4,9 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { fromZonedTime } from 'date-fns-tz';
+
+import { parseIcs, type IcsDateTime } from '@/domain/ics';
 
 import { supabase } from './supabase';
 
@@ -27,25 +30,57 @@ type Backup = {
   data: Record<string, unknown[]>;
 };
 
-/** 전체 데이터 → JSON 파일 → 공유 시트 */
-export async function exportBackup(): Promise<string> {
+async function buildBackup(): Promise<Backup> {
   const data: Record<string, unknown[]> = {};
   for (const t of TABLES) {
     const { data: rows, error } = await supabase.from(t).select('*');
     if (error) throw error;
     data[t] = rows ?? [];
   }
-  const backup: Backup = {
-    app: 'chrona',
-    schemaVersion: SCHEMA_VERSION,
-    exportedAt: new Date().toISOString(),
-    data,
-  };
+  return { app: 'chrona', schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), data };
+}
+
+/** 전체 데이터 → JSON 파일 → 공유 시트 */
+export async function exportBackup(): Promise<string> {
+  const backup = await buildBackup();
   const name = `chrona-backup-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.json`;
   const file = new File(Paths.cache, name);
   file.write(JSON.stringify(backup));
   await Sharing.shareAsync(file.uri, { mimeType: 'application/json' });
   return name;
+}
+
+const AUTO_BACKUP_KEY = 'chrona.last-auto-backup';
+const AUTO_BACKUP_INTERVAL = 7 * 86400_000;
+
+/**
+ * 자동 로컬 백업 (stage-11): 주 1회, 포그라운드 진입 시. Supabase 무료 티어
+ * 일시정지/유실 대비 — 앱 문서 폴더에 최신 1개 + 직전 1개를 남긴다.
+ * 실패는 조용히 무시 (오프라인·미로그인은 정상 상황).
+ */
+export async function autoBackupIfDue(): Promise<boolean> {
+  try {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+    const last = await AsyncStorage.getItem(AUTO_BACKUP_KEY);
+    if (last && Date.now() - new Date(last).getTime() < AUTO_BACKUP_INTERVAL) return false;
+    const { data: s } = await supabase.auth.getSession();
+    if (!s.session) return false;
+
+    const backup = await buildBackup();
+    const latest = new File(Paths.document, 'chrona-auto-backup.json');
+    const prev = new File(Paths.document, 'chrona-auto-backup.prev.json');
+    if (latest.exists) {
+      if (prev.exists) prev.delete();
+      latest.copy(prev);
+    }
+    latest.write(JSON.stringify(backup));
+    await AsyncStorage.setItem(AUTO_BACKUP_KEY, new Date().toISOString());
+    console.log('[chrona] auto backup written');
+    return true;
+  } catch (e) {
+    console.warn('[chrona] auto backup skipped:', e);
+    return false;
+  }
 }
 
 /** JSON 가져오기 — 스키마 버전 검증 후 테이블별 upsert (id 충돌 시 교체) */
@@ -77,6 +112,77 @@ export async function importBackup(): Promise<{ restored: number } | null> {
     restored += rows.length;
   }
   return { restored };
+}
+
+// ─── .ics 가져오기 (stage-11) ───────────────────────────
+
+function icsToDate(dt: IcsDateTime, tz: string): Date {
+  const iso = `${dt.date}T${dt.time ?? '00:00:00'}`;
+  return dt.utc ? new Date(`${iso}Z`) : fromZonedTime(iso, tz);
+}
+
+function shiftDate(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** .ics 파일 선택 → 파싱 → events 일괄 삽입 (kind='schedule'). 취소 시 null */
+export async function importIcs(): Promise<{ imported: number } | null> {
+  const picked = await DocumentPicker.getDocumentAsync({
+    type: ['text/calendar', 'application/octet-stream', '*/*'],
+  });
+  if (picked.canceled || !picked.assets[0]) return null;
+  const asset = picked.assets[0];
+  if (!asset.name.toLowerCase().endsWith('.ics')) throw new Error('.ics 파일이 아닙니다');
+  const file = new File(asset.uri);
+  if ((file.size ?? 0) > 20 * 1024 * 1024) throw new Error('파일이 너무 큽니다 (20MB 초과)');
+
+  const parsed = parseIcs(file.textSync());
+  if (parsed.length === 0) throw new Error('가져올 일정이 없습니다');
+
+  const { data: s } = await supabase.auth.getSession();
+  if (!s.session) throw new Error('로그인 필요');
+  const uid = s.session.user.id;
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const nowIso = new Date().toISOString();
+
+  const rows = parsed.map((e) => {
+    const allDay = e.start.time === null;
+    // DTEND;VALUE=DATE는 exclusive (RFC 5545) → 하루 빼고 시작일 밑으로는 내려가지 않게
+    const endDate = e.end?.date
+      ? (() => {
+          const d = shiftDate(e.end!.date, -1);
+          return d < e.start.date ? e.start.date : d;
+        })()
+      : e.start.date;
+    return {
+      user_id: uid,
+      kind: 'schedule',
+      title: e.title,
+      memo: e.memo,
+      location: e.location,
+      all_day: allDay,
+      start_date: allDay ? e.start.date : null,
+      end_date: allDay ? endDate : null,
+      starts_at: allDay ? null : icsToDate(e.start, tz).toISOString(),
+      ends_at: allDay
+        ? null
+        : e.end
+          ? icsToDate(e.end, tz).toISOString()
+          : new Date(icsToDate(e.start, tz).getTime() + 3600_000).toISOString(),
+      rrule: e.rrule,
+      rrule_until: e.rruleUntil ? icsToDate(e.rruleUntil, tz).toISOString() : null,
+      category_id: null,
+      color: null,
+      is_done: false,
+      updated_at: nowIso,
+    };
+  });
+
+  const { error } = await supabase.from('events').insert(rows as never[]);
+  if (error) throw new Error(`가져오기 실패: ${error.message}`);
+  return { imported: rows.length };
 }
 
 /** .ics 내보내기 (stage-8 §4-3). 종일은 VALUE=DATE, rrule 그대로 */
