@@ -78,8 +78,11 @@ function Auth() {
     setSent(true);
   };
   useEffect(() => {
-    // 매직링크 복귀: URL 해시의 토큰은 supabase-js가 detectSessionInUrl로 처리
-    const { data } = supabase.auth.onAuthStateChange(() => window.location.reload());
+    // 매직링크 복귀: URL 해시의 토큰은 supabase-js가 detectSessionInUrl로 처리.
+    // INITIAL_SESSION은 매 로드마다 발화하므로 반드시 SIGNED_IN만 — 아니면 무한 리로드
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN') window.location.reload();
+    });
     return () => data.subscription.unsubscribe();
   }, []);
   return (
