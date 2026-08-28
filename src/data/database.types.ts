@@ -121,6 +121,29 @@ type AppSettingsRow = {
   updated_at: string;
 };
 
+type MeetPollRow = {
+  id: string;
+  user_id: string;
+  title: string;
+  dates: string[];
+  time_start: string;
+  time_end: string;
+  slot_minutes: number;
+  share_token: string;
+  confirmed_start: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+type MeetResponseRow = {
+  id: string;
+  poll_id: string;
+  participant_name: string;
+  slots: string[];
+  updated_at: string;
+};
+
 type TableShape<Row, Required extends keyof Row> = {
   Row: Row;
   Insert: Pick<Row, Required> & Partial<Omit<Row, Required>>;
@@ -146,9 +169,20 @@ export type Database = {
         'user_id' | 'started_at' | 'planned_minutes'
       >;
       app_settings: TableShape<AppSettingsRow, 'user_id'>;
+      meet_polls: TableShape<
+        MeetPollRow,
+        'user_id' | 'title' | 'dates' | 'time_start' | 'time_end'
+      >;
+      meet_responses: TableShape<MeetResponseRow, 'poll_id' | 'participant_name'>;
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      meet_get_poll: { Args: { p_token: string }; Returns: unknown };
+      meet_submit_response: {
+        Args: { p_token: string; p_name: string; p_slots: string[] };
+        Returns: undefined;
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

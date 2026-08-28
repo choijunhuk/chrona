@@ -2,6 +2,7 @@ export * from './alarm-payload';
 export * from './calendar';
 export * from './display';
 export * from './ics';
+export * from './meet';
 export * from './quick-add';
 export * from './recurrence';
 export * from './rrule-ui';

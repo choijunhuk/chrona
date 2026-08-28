@@ -112,6 +112,11 @@ export default function More() {
           <AppText color="textDim">›</AppText>
         </Pressable>
         <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={() => router.push('/meet')}>
+          <AppText>약속 잡기 (when2meet)</AppText>
+          <AppText color="textDim">›</AppText>
+        </Pressable>
+        <View style={styles.divider} />
         <Pressable
           style={styles.row}
           onPress={() =>
