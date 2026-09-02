@@ -246,7 +246,9 @@ export async function cancelAllTriggers(): Promise<void> {
   ]);
   const displayedIds = new Set(displayed.map((d) => d.id));
   // 스누즈는 재계산 대상이 아니다 — 사용자가 방금 "5분 뒤"를 누른 약속이라 살려둔다 (stage-13 §4)
-  const toCancel = pendingIds.filter((id) => !displayedIds.has(id) && !isSnoozeId(id));
+  const toCancel = pendingIds.filter(
+    (id) => !displayedIds.has(id) && !isSnoozeId(id) && !isTimeoutId(id)
+  );
   if (toCancel.length > 0) {
     await notifee.cancelTriggerNotifications(toCancel);
   }
@@ -268,6 +270,47 @@ export async function cancelSnoozes(): Promise<number> {
   const ids = (await notifee.getTriggerNotificationIds()).filter(isSnoozeId);
   if (ids.length > 0) await notifee.cancelTriggerNotifications(ids);
   return ids.length;
+}
+
+const TIMEOUT_PREFIX = 'timeout:';
+const TIMEOUT_KIND = 'alarm-timeout';
+
+function isTimeoutId(id: string): boolean {
+  return id.startsWith(TIMEOUT_PREFIX);
+}
+
+/**
+ * headless 자동 종료 (stage-13): 알람 발화 시 N분 뒤 무음 트리거를 걸어둔다.
+ * /alarm-ring 화면이 안 떴을 때(알림 차단·화면 켜짐·FSI 실패)도 알람이 영원히 울리지 않게 하는 마지막 안전망.
+ * AlarmManager가 보장하므로 JS 프로세스가 죽어도 동작한다.
+ */
+async function scheduleAlarmTimeout(notificationId: string, payload: AlarmPayload): Promise<void> {
+  const { getLocalSettings } = await import('@/data/local-settings');
+  const minutes = (await getLocalSettings()).alarmTimeoutMinutes;
+  if (!(minutes > 0)) return;
+  await notifee.createTriggerNotification(
+    {
+      id: `${TIMEOUT_PREFIX}${notificationId}`,
+      title: payload.title,
+      body: '알람 자동 종료',
+      data: { ...serializeAlarmPayload(payload), chronaKind: TIMEOUT_KIND, target: notificationId },
+      android: {
+        channelId: CHANNELS.ongoing, // LOW·무음 — 발화 즉시 스스로 취소되는 내부 트리거
+        importance: AndroidImportance.MIN,
+        pressAction: { id: 'default', launchActivity: 'default' },
+      },
+    },
+    {
+      type: TriggerType.TIMESTAMP,
+      timestamp: Date.now() + minutes * 60_000,
+      alarmManager: { type: AlarmType.SET_ALARM_CLOCK },
+    }
+  );
+}
+
+async function cancelAlarmTimeout(notificationId: string): Promise<void> {
+  if (!notificationId) return;
+  await notifee.cancelTriggerNotification(`${TIMEOUT_PREFIX}${notificationId}`).catch(() => {});
 }
 
 /** 알람 채널 여부 — 알람음별로 채널이 나뉘어 있다 (chrona.alarm / chrona.alarm.*) */
@@ -304,6 +347,7 @@ export async function listScheduled(): Promise<ScheduledAlarm[]> {
 export async function dismissAlarm(notificationId: string): Promise<void> {
   await stopAlarmSound();
   await notifee.stopForegroundService();
+  await cancelAlarmTimeout(notificationId);
   if (notificationId) {
     await notifee.cancelNotification(notificationId);
     return;
@@ -560,8 +604,21 @@ async function handleEvent({ type, detail }: Event): Promise<void> {
       await handleAnchorFired(notification?.id);
       return;
     }
+    if (kind === TIMEOUT_KIND) {
+      if (notification?.id) await notifee.cancelNotification(notification.id);
+      const target = String(notification?.data?.target ?? '');
+      const displayed = await notifee.getDisplayedNotifications();
+      if (target && displayed.some((n) => n.id === target)) {
+        await dismissAlarm(target);
+        await postMissedAlarm(parseAlarmPayload(notification?.data));
+      }
+      return;
+    }
     if (isAlarmChannel(notification?.android?.channelId)) {
       await overrideOlderAlarms(notification?.id);
+      if (notification?.id) {
+        await scheduleAlarmTimeout(notification.id, parseAlarmPayload(notification.data));
+      }
       notifyAlarmDelivered(notification?.id, notification?.data);
     }
   }
