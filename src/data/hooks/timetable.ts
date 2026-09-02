@@ -8,7 +8,7 @@ import { rescheduleDebounced } from '@/native/rescheduler';
 import { qk } from '../keys';
 import type { EventRow, PeriodPresetRow } from '../mappers';
 import { toDomainEvent, toDomainPeriodPreset } from '../mappers';
-import { assertOnline } from '../net';
+import { assertOnline, toastMutationError } from '../net';
 import { supabase } from '../supabase';
 
 const SK = ['semesters'] as const;
@@ -70,6 +70,7 @@ export function useCreateSemester() {
       if (error) throw error;
       return data as SemesterRowT;
     },
+    onError: (e) => toastMutationError(e, '학기 저장 실패'),
     onSettled: () => void qc.invalidateQueries({ queryKey: SK }),
   });
 }
@@ -89,6 +90,7 @@ export function useSetActiveSemester() {
         .eq('id', id);
       if (error) throw error;
     },
+    onError: (e) => toastMutationError(e, '학기 전환 실패'),
     onSettled: () => void qc.invalidateQueries({ queryKey: SK }),
   });
 }
@@ -118,6 +120,7 @@ export function useUpdatePeriodPreset() {
         .eq('id', id);
       if (error) throw error;
     },
+    onError: (e) => toastMutationError(e, '교시 저장 실패'),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.periodPresets() });
       rescheduleDebounced();
@@ -200,6 +203,7 @@ export function useCreateTimetableBlock() {
       });
       if (error) throw error;
     },
+    onError: (e) => toastMutationError(e, '시간표 저장 실패'),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.allEvents() });
       rescheduleDebounced();
@@ -259,6 +263,7 @@ export function useCopySemesterTimetable() {
       }
       return rows.length;
     },
+    onError: (e) => toastMutationError(e, '시간표 저장 실패'),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.allEvents() });
       rescheduleDebounced();

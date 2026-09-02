@@ -8,7 +8,7 @@ import { Pressable, ScrollView, StyleSheet, TextInput, ToastAndroid, View } from
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { getLocalSettings, localSettingsCache } from '@/data/local-settings';
+import { getLocalSettings, localSettingsCache, setLocalSettings } from '@/data/local-settings';
 import { useCreateEvent, useEvents } from '@/data/hooks/events';
 import { parseQuickAdd, quickAddPreview } from '@/domain/quick-add';
 import { useOverrides } from '@/data/hooks/overrides';
@@ -19,6 +19,8 @@ import { formatKoreanDate } from '@/domain/calendar';
 import { dDayLabel, daysUntilDue, dueUrgency } from '@/domain/task';
 import { formatTimeLabel, toDateOnly, todayDateOnly } from '@/domain/time';
 import { usePermissionStore } from '@/native/permissions';
+import { readPlannedCache, subscribePlannedCache, type PlannedSummary } from '@/native/planned-cache';
+import { rescheduleDebounced } from '@/native/rescheduler';
 import { eventColor } from '@/ui/screens/calendar/day-sheet';
 import { haptics } from '@/ui/components/haptics';
 import { AppText } from '@/ui/components/text';
@@ -45,14 +47,57 @@ export function HomeScreen() {
   // 1분 tick — 포커스 중에만 (stage-4 §1-5, master §6)
   const [now, setNow] = useState(() => new Date());
   const [examMode, setExamMode] = useState(() => localSettingsCache().examMode);
+  // 다음 알람 칩: 재계산 결과 캐시를 읽는다 — DB 재전개 없음 (planned-cache)
+  const [planned, setPlanned] = useState<PlannedSummary[]>([]);
+  const [skippedItem, setSkippedItem] = useState<PlannedSummary | null>(null);
+  const [quietUntil, setQuietUntil] = useState<string | null>(() => localSettingsCache().quietUntil);
   useFocusEffect(
     useCallback(() => {
       setNow(new Date());
-      void getLocalSettings().then((s) => setExamMode(s.examMode));
+      void getLocalSettings().then((s) => {
+        setExamMode(s.examMode);
+        setQuietUntil(s.quietUntil);
+      });
+      void readPlannedCache().then(setPlanned);
+      const unsubscribe = subscribePlannedCache(setPlanned);
       const t = setInterval(() => setNow(new Date()), 60_000);
-      return () => clearInterval(t);
+      return () => {
+        clearInterval(t);
+        unsubscribe();
+      };
     }, [])
   );
+
+  const nextAlarm = useMemo(
+    () => planned.find((p) => new Date(p.fireAt).getTime() > now.getTime()) ?? null,
+    [planned, now]
+  );
+  // 건너뛴 직후엔 재계산이 캐시에서 지우므로, 되돌리기를 위해 화면이 따로 붙잡고 있는다.
+  // 발화 시각이 지나면 그대로 놓아준다 (지난 "건너뜀"이 계속 남아 있으면 안 된다)
+  const skippedActive = !!skippedItem && new Date(skippedItem.fireAt).getTime() > now.getTime();
+  const alarmChip = skippedActive ? skippedItem : nextAlarm;
+
+  const skipNextAlarm = async (p: PlannedSummary) => {
+    haptics.selection();
+    setSkippedItem(p);
+    const s = await getLocalSettings();
+    await setLocalSettings({ skippedAlarmKeys: [...new Set([...s.skippedAlarmKeys, p.key])] });
+    rescheduleDebounced();
+  };
+  const undoSkip = async (p: PlannedSummary) => {
+    haptics.selection();
+    setSkippedItem(null);
+    const s = await getLocalSettings();
+    await setLocalSettings({ skippedAlarmKeys: s.skippedAlarmKeys.filter((k) => k !== p.key) });
+    rescheduleDebounced();
+  };
+  const clearQuiet = async () => {
+    haptics.success();
+    setQuietUntil(null);
+    await setLocalSettings({ quietUntil: null });
+    rescheduleDebounced();
+  };
+  const quietActive = !!quietUntil && new Date(quietUntil).getTime() > now.getTime();
 
   // 빠른 추가 (stage-11) — 규칙 기반 파서, 네트워크·AI 없음
   const [quickText, setQuickText] = useState('');
@@ -150,6 +195,19 @@ export function HomeScreen() {
         </Pressable>
       )}
 
+      {quietActive && (
+        <View style={styles.quietBanner}>
+          <AppText variant="caption" color="textSub" nums>
+            방해금지 중 · ~{new Date(quietUntil!).getMonth() + 1}/{new Date(quietUntil!).getDate()}까지
+          </AppText>
+          <Pressable hitSlop={8} onPress={() => void clearQuiet()}>
+            <AppText variant="caption" color="accent">
+              해제
+            </AppText>
+          </Pressable>
+        </View>
+      )}
+
       <Animated.View entering={FadeInDown.delay(0)}>
         <AppText variant="display">{formatKoreanDate(today)}</AppText>
         <AppText variant="caption" color="textSub" nums>
@@ -185,6 +243,28 @@ export function HomeScreen() {
         )}
       </Animated.View>
 
+      {/* 다음 알람 (stage-13) — 예약된 알람을 이번만 건너뛸 수 있다 */}
+      {alarmChip && (
+        <Animated.View entering={FadeInDown.delay(30)}>
+          <View style={styles.alarmChip}>
+            <AppText variant="caption" nums style={styles.alarmChipText}>
+              {skippedActive ? '건너뜀 · ' : '다음 알람 · '}
+              {alarmChip.timeLabel} {alarmChip.title} ({alarmChip.mode === 'alarm' ? '알람' : '알림'})
+            </AppText>
+            <Pressable
+              hitSlop={8}
+              onPress={() =>
+                void (skippedActive ? undoSkip(alarmChip) : skipNextAlarm(alarmChip))
+              }
+            >
+              <AppText variant="caption" color="accent">
+                {skippedActive ? '되돌리기' : '이번만 건너뛰기'}
+              </AppText>
+            </Pressable>
+          </View>
+        </Animated.View>
+      )}
+
       {/* 다음 일정 */}
       <Animated.View entering={FadeInDown.delay(40)} style={styles.section}>
         <AppText variant="micro" color="textDim" style={styles.sectionLabel}>
@@ -193,7 +273,12 @@ export function HomeScreen() {
         {nextEvent ? (
           <Pressable
             style={styles.nextCard}
-            onPress={() => router.push({ pathname: '/event/[id]', params: { id: nextEvent.id } })}
+            onPress={() =>
+              router.push({
+                pathname: '/event/[id]',
+                params: { id: nextEvent.id, occ: nextEvent.startsAt!.toISOString() },
+              })
+            }
           >
             <View
               style={[styles.nextBar, { backgroundColor: eventColor(nextEvent, categories ?? []) }]}
@@ -263,7 +348,12 @@ export function HomeScreen() {
             <Pressable
               key={e.id}
               style={styles.rowItem}
-              onPress={() => router.push({ pathname: '/event/[id]', params: { id: e.id } })}
+              onPress={() =>
+                router.push({
+                  pathname: '/event/[id]',
+                  params: { id: e.id, occ: e.startsAt!.toISOString() },
+                })
+              }
             >
               <AppText variant="caption" color="textSub" nums style={styles.rowTime}>
                 {formatTimeLabel(e.startsAt!, TZ)}
@@ -288,9 +378,9 @@ export function HomeScreen() {
                 hitSlop={8}
                 onPress={() => {
                   haptics.success();
-                  toggleDone.mutate({ id: task.id, done: true });
+                  toggleDone.mutate({ id: task.id, done: !task.isDone });
                 }}
-                style={styles.checkbox}
+                style={[styles.checkbox, task.isDone && styles.checkboxOn]}
               />
               <AppText numberOfLines={1} style={styles.rowTitle}>
                 {task.title}
@@ -339,6 +429,26 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
     },
     section: { gap: spacing.sm },
+    quietBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: colors.surfaceAlt,
+      borderRadius: radius.sm,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+    },
+    alarmChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.md,
+      backgroundColor: colors.surface,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+    },
+    alarmChipText: { flex: 1 },
     quickRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -392,6 +502,7 @@ const createStyles = (colors: ThemeColors) =>
       borderWidth: 1.5,
       borderColor: colors.textDim,
     },
+    checkboxOn: { backgroundColor: colors.success, borderColor: colors.success },
     focusBtn: {
       borderRadius: radius.md,
       paddingVertical: spacing.lg,

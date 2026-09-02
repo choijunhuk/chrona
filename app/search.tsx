@@ -130,7 +130,16 @@ export default function Search() {
               <Pressable
                 key={r.id}
                 style={styles.item}
-                onPress={() => router.push({ pathname: '/event/[id]', params: { id: r.id } })}
+                onPress={() =>
+                  router.push({
+                    pathname: '/event/[id]',
+                    // 반복 일정은 기준 회차를 함께 넘겨 "이 일정만/이후/전체" 선택이 뜨게 한다
+                    params:
+                      r.rrule && r.starts_at
+                        ? { id: r.id, occ: new Date(r.starts_at).toISOString() }
+                        : { id: r.id },
+                  })
+                }
               >
                 {highlight(r.title)}
                 <AppText variant="caption" color="textSub" numberOfLines={1}>

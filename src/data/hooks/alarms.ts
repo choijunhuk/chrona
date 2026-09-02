@@ -6,7 +6,7 @@ import { rescheduleDebounced } from '@/native/rescheduler';
 
 import type { StandaloneAlarmDraft, StandaloneAlarmRow } from '../mappers';
 import { toDomainStandaloneAlarm, toStandaloneAlarmInsert } from '../mappers';
-import { assertOnline } from '../net';
+import { assertOnline, toastMutationError } from '../net';
 import { supabase } from '../supabase';
 
 const AK = ['standaloneAlarms'] as const;
@@ -33,6 +33,7 @@ function useAlarmMutation<TVars>(fn: (vars: TVars) => Promise<void>) {
       assertOnline();
       await fn(vars);
     },
+    onError: (e) => toastMutationError(e, '알람 저장 실패'),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: AK });
       rescheduleDebounced();
@@ -51,13 +52,37 @@ export function useCreateAlarm() {
   });
 }
 
+/** 켜기/끄기는 낙관적 업데이트 — 왕복 동안 스위치가 되돌아가 보이면 안 된다 (settings.ts 패턴) */
 export function useToggleAlarm() {
-  return useAlarmMutation(async ({ id, enabled }: { id: string; enabled: boolean }) => {
-    const { error } = await supabase
-      .from('standalone_alarms')
-      .update({ enabled, updated_at: new Date().toISOString() })
-      .eq('id', id);
-    if (error) throw error;
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
+      assertOnline();
+      const { error } = await supabase
+        .from('standalone_alarms')
+        .update({ enabled, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onMutate: async ({ id, enabled }) => {
+      await qc.cancelQueries({ queryKey: AK });
+      const prev = qc.getQueryData<StandaloneAlarm[]>(AK);
+      if (prev) {
+        qc.setQueryData<StandaloneAlarm[]>(
+          AK,
+          prev.map((a) => (a.id === id ? { ...a, enabled } : a))
+        );
+      }
+      return { prev };
+    },
+    onError: (e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(AK, ctx.prev);
+      toastMutationError(e, '알람 변경 실패');
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: AK });
+      rescheduleDebounced();
+    },
   });
 }
 

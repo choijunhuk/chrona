@@ -15,11 +15,12 @@ import {
   StyleSheet,
   Switch,
   TextInput,
+  ToastAndroid,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useSaveReminders } from '@/data/hooks/reminders';
+import { useRemindersForEvents, useSaveReminders } from '@/data/hooks/reminders';
 import {
   useCopySemesterTimetable,
   useCreateSemester,
@@ -29,7 +30,7 @@ import {
   useSetActiveSemester,
   useTimetableEvents,
 } from '@/data/hooks/timetable';
-import type { ChronaEvent, Semester } from '@/domain/types';
+import type { ChronaEvent, Reminder, Semester } from '@/domain/types';
 import { toDateOnly } from '@/domain/time';
 import { Button } from '@/ui/components/button';
 import { haptics } from '@/ui/components/haptics';
@@ -188,19 +189,51 @@ export function TimetableScreen() {
     }
   };
 
-  // 알림 일괄 (stage-5 §1-7): 전 과목 10분 전 notify on/off
-  const allHaveReminder = (events ?? []).length > 0; // 근사 표시 — 서버 상태는 재조회로 확정
-  const [bulkOn, setBulkOn] = useState(false);
+  // 알림 일괄 (stage-5 §1-7): 전 과목 10분 전 notify on/off.
+  // 스위치 상태는 실제 reminders에서 도출한다 — 로컬 boolean은 앱을 껐다 켜면 거짓말을 한다.
+  const eventIds = useMemo(() => (events ?? []).map((e) => e.id), [events]);
+  const { data: allReminders } = useRemindersForEvents(eventIds);
+  const isBulkReminder = (r: Reminder) => r.offsetMinutes === 10 && r.mode === 'notify';
+  const toDraft = (r: Reminder) => ({
+    offsetMinutes: r.offsetMinutes,
+    mode: r.mode,
+    soundKey: r.soundKey,
+    vibrate: r.vibrate,
+    enabled: r.enabled,
+  });
+
+  const bulkOn = useMemo(() => {
+    const evs = events ?? [];
+    if (!evs.length || !allReminders) return false;
+    return evs.every((e) => allReminders.some((r) => r.eventId === e.id && isBulkReminder(r)));
+  }, [events, allReminders]);
+  const [pendingBulk, setPendingBulk] = useState<boolean | null>(null);
+
   const toggleBulk = async (on: boolean) => {
-    setBulkOn(on);
+    const evs = events ?? [];
+    if (!evs.length) return;
+    setPendingBulk(on);
     haptics.selection();
-    for (const e of events ?? []) {
-      await saveReminders.mutateAsync({
-        eventId: e.id,
-        drafts: on
-          ? [{ offsetMinutes: 10, mode: 'notify', soundKey: 'default', vibrate: true, enabled: true }]
-          : [],
-      });
+    try {
+      // 다른 알림은 건드리지 않는다 — 10분 전 notify 하나만 더하거나 뺀다
+      const jobs = [];
+      for (const e of evs) {
+        const mine = (allReminders ?? []).filter((r) => r.eventId === e.id);
+        const has = mine.some(isBulkReminder);
+        if (on === has) continue;
+        const drafts = on
+          ? [
+              ...mine.map(toDraft),
+              { offsetMinutes: 10, mode: 'notify' as const, soundKey: 'default', vibrate: true, enabled: true },
+            ]
+          : mine.filter((r) => !isBulkReminder(r)).map(toDraft);
+        jobs.push(saveReminders.mutateAsync({ eventId: e.id, drafts }));
+      }
+      await Promise.all(jobs);
+    } catch (err) {
+      ToastAndroid.show(`알림 변경 실패: ${String(err)}`, ToastAndroid.LONG);
+    } finally {
+      setPendingBulk(null);
     }
   };
 
@@ -217,7 +250,7 @@ export function TimetableScreen() {
             수업 10분 전 알림
           </AppText>
           <Switch
-            value={bulkOn && allHaveReminder}
+            value={pendingBulk ?? bulkOn}
             onValueChange={toggleBulk}
             trackColor={{ true: colors.accent, false: colors.border }}
             thumbColor={colors.white}
@@ -295,7 +328,12 @@ export function TimetableScreen() {
                     },
                   ]}
                   onPress={() =>
-                    router.push({ pathname: '/event/[id]', params: { id: b.event.id } })
+                    router.push({
+                      pathname: '/event/[id]',
+                      params: b.event.startsAt
+                        ? { id: b.event.id, occ: b.event.startsAt.toISOString() }
+                        : { id: b.event.id },
+                    })
                   }
                 >
                   <AppText variant="micro" numberOfLines={2} style={styles.blockTitle}>

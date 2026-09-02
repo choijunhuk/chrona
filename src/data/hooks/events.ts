@@ -55,6 +55,8 @@ export function useEvents(range: EventRange) {
 export function useEvent(id: string) {
   return useQuery({
     queryKey: qk.event(id),
+    // 생성 모드('new')·빈 id에서는 조회하지 않는다 (존재하지 않는 행 404 방지)
+    enabled: !!id && id !== 'new',
     queryFn: async (): Promise<ChronaEvent> => {
       const { data, error } = await supabase.from('events').select('*').eq('id', id).single();
       if (error) throw error;

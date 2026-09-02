@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { MeetResponse } from '@/domain/meet';
 
 import { qk } from '../keys';
-import { assertOnline } from '../net';
+import { assertOnline, toastMutationError } from '../net';
 import { supabase } from '../supabase';
 import { rescheduleDebounced } from '@/native/rescheduler';
 
@@ -124,6 +124,7 @@ export function useDeleteMeetPoll() {
         .eq('id', id);
       if (error) throw error;
     },
+    onError: (e) => toastMutationError(e, '삭제 실패'),
     onSettled: () => void qc.invalidateQueries({ queryKey: qk.meetPolls() }),
   });
 }
