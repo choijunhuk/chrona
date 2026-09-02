@@ -80,3 +80,12 @@
 - 검증: 테스트 92개 그린 / typecheck / lint / 익명 RPC curl 왕복 / RLS 직접 접근 차단 / 웹 프로덕션 실링크 렌더 / APK 기기 설치 / 웹 배포
 - 미결: 실사용 검증(친구 응답 시나리오), 슬롯 키 벽시계 규약 문서만 — 해외 참여자 tz 표시(YAGNI)
 - 발견한 함정: ① supabase CLI 미링크 시 psql 세션 풀러(aws-0-ap-northeast-2)로 마이그레이션 적용 가능 ② database.types.ts 수기 갱신 — 다음 `pnpm types` 재생성 시 meet 테이블 대조 필수 ③ security definer 함수는 search_path 고정 + execute revoke 없으면 공격면
+
+## Stage 13 — 알람 제어·안정화 (2026-09-02)
+
+- 브랜치: `stage-13-alarm-control` (머지 대기)
+- 계기: 사용자 "알람 끄는 기능이 없다" → 전체 점검. 알람 알림에 액션 버튼 0, 알림 탭 무반응(PRESS 미처리), 뒤로가기 시 소리 지속, 해제 후 /debug 착지가 근본 원인
+- 구현 요약: 알림 해제/스누즈 액션(headless 처리), PRESS→/alarm-ring, BackHandler=해제, 자동 종료(기본 10분)+길게 눌러 해제 폴백, 스누즈 재계산 생존(`snooze:` id), 방해금지(quietUntil + 도메인 `applyAlarmFilters` + quiet 앵커), 이번만 건너뛰기(홈 칩, skippedAlarmKeys), 알람음 4종 생성+채널 분리+무음(진동), 리마인더별 enabled/사운드, 설정 6종(방해금지·모든 알람 끄기·기본음·스누즈 간격/횟수·자동 종료), 편집기 검증(빈 제목/종료<시작), 시간표 수업 편집 시 kind 보존, 시간표 일괄 토글 비파괴화, 알람 삭제 확인+낙관적 토글, reminders diff upsert, display 종일 반복 newStart 버그, `restore_backup` RPC 단일 트랜잭션 복원, 자동 백업 SAF 폴더 복사+앱 내 복원, meet client_key(이름 충돌 방지)+길이 캡, 웹 포인터 이벤트(터치)+모바일 레이아웃+Meet 코드 분할(참여자 552→494KB), CI 워크플로우, `pnpm verify`
+- 검증: 테스트 121개(신규 29) / typecheck / lint / 웹 빌드 그린. 0006 마이그레이션 드라이런(롤백) 통과
+- 미결: **0006 실제 적용은 사용자 실행**(분류기 차단), 적용 후 웹 배포. 실기기: 알림 액션 버튼·PRESS·뒤로가기·자동 종료·방해금지·건너뛰기·알람음 4종·SAF 폴더·자동 백업 복원. 웹 터치는 구조 검증만 — 실폰 확인 필요
+- 발견한 함정: ① 리마인더에 스누즈 액션 주면 snoozeAlarm이 SET_ALARM_CLOCK 알람으로 승격 — 리마인더는 해제만 ② 웹 셀별 pointerdown은 implicit capture 때문에 형제 셀 enter 안 옴 — 컨테이너 캡처 + elementFromPoint ③ `Alert.alert`는 버튼 3개 제한 — 선택지 5개는 Modal 시트 ④ opus 세션 한도(429)로 서브에이전트 3개 중단 — SendMessage로 컨텍스트 유지 재개 가능
