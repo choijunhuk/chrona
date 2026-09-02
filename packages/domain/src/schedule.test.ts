@@ -4,9 +4,12 @@ import { asDateOnly } from './time';
 import type { ChronaEvent, EventOverride, Reminder, StandaloneAlarm } from './types';
 import {
   ALARM_LIMIT,
+  alarmKey,
+  applyAlarmFilters,
   computeAlarmTimes,
   expandOccurrences,
   expandStandaloneAlarms,
+  type PlannedAlarm,
 } from './schedule';
 
 const TZ = 'Asia/Seoul';
@@ -197,5 +200,44 @@ describe('expandStandaloneAlarms', () => {
     expect(expandStandaloneAlarms([off], NOW, RANGE.to, TZ)).toHaveLength(0);
     const oneShot: StandaloneAlarm = { ...off, id: 'a4', enabled: true };
     expect(expandStandaloneAlarms([oneShot], NOW, RANGE.to, TZ)).toHaveLength(1);
+  });
+});
+
+describe('applyAlarmFilters (stage-13)', () => {
+  const now = new Date('2026-09-02T00:00:00Z');
+  const mk = (eventId: string, at: string): PlannedAlarm => ({
+    fireAt: new Date(at),
+    mode: 'alarm',
+    payload: {
+      eventId,
+      occurrenceStart: at,
+      title: eventId,
+      timeLabel: '',
+      colorHex: '#000',
+      snoozeMinutes: 5,
+      maxSnooze: 3,
+      currentSnoozeCount: 0,
+      soundKey: 'default',
+    },
+  });
+  const a = mk('a', '2026-09-02T09:00:00Z');
+  const b = mk('b', '2026-09-03T09:00:00Z');
+  const c = mk('c', '2026-09-10T09:00:00Z');
+
+  it('quietUntil drops alarms before the window end only', () => {
+    const r = applyAlarmFilters([a, b, c], { now, quietUntil: new Date('2026-09-05T00:00:00Z'), skippedKeys: [] });
+    expect(r.planned.map((p) => p.payload.eventId)).toEqual(['c']);
+  });
+
+  it('expired quietUntil is ignored', () => {
+    const r = applyAlarmFilters([a], { now, quietUntil: new Date('2026-09-01T00:00:00Z'), skippedKeys: [] });
+    expect(r.planned).toHaveLength(1);
+  });
+
+  it('skipped keys remove exactly one alarm and prune stale keys', () => {
+    const stale = 'z|2026-08-01T00:00:00.000Z';
+    const r = applyAlarmFilters([a, b], { now, quietUntil: null, skippedKeys: [alarmKey(a.payload), stale] });
+    expect(r.planned.map((p) => p.payload.eventId)).toEqual(['b']);
+    expect(r.liveSkippedKeys).toEqual([alarmKey(a.payload)]);
   });
 });
