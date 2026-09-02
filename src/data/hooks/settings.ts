@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { AppSettings, Category } from '@/domain/types';
+import { rescheduleDebounced } from '@/native/rescheduler';
 
 import { qk } from '../keys';
 import type { AppSettingsRow, CategoryRow } from '../mappers';
@@ -55,6 +56,10 @@ export function useUpdateSettings() {
     onError: (_e, _v, ctx) => {
       if (ctx?.prev) qc.setQueryData(qk.settings(), ctx.prev);
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.settings() }),
+    onSettled: () => {
+      // 스누즈 간격·기본 알람음 등은 예약된 payload에 박혀 있다 — 설정이 바뀌면 다시 예약해야 반영된다
+      rescheduleDebounced();
+      return qc.invalidateQueries({ queryKey: qk.settings() });
+    },
   });
 }

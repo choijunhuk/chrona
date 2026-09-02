@@ -46,16 +46,24 @@ function testPayload(fireAt: Date, title: string): AlarmPayload {
 }
 
 // 액션 본체는 렌더 밖(모듈 레벨) — react-hooks/purity 대상에서 제외되고, 실제로도 렌더와 무관하다
-async function scheduleTestAlarm(afterMs: number, label: string) {
+async function scheduleTestAlarm(afterMs: number, label: string, soundKey = 'default') {
   const fireAt = new Date(Date.now() + afterMs);
-  const payload = testPayload(fireAt, '테스트 알람');
+  const payload = { ...testPayload(fireAt, '테스트 알람'), soundKey };
   const id = await scheduleAlarm(payload, fireAt);
   await rememberScheduled(id, fireAt, payload);
-  return `② 알람 예약됨 → ${formatTimeLabel(fireAt)} (${label} 뒤)`;
+  return `② 알람 예약됨 (${soundKey}) → ${formatTimeLabel(fireAt)} (${label} 뒤)`;
 }
 
 const actions = {
   testAlarm: () => scheduleTestAlarm(10_000, '10초'),
+  testAlarmSound01: () => scheduleTestAlarm(10_000, '10초', 'alarm_01'),
+  dumpSnoozes: async () => {
+    const list = (await listScheduled()).filter((a) => a.id.startsWith('snooze:'));
+    if (list.length === 0) return '예약된 스누즈 없음';
+    return list
+      .map((a) => `• ${a.title} @ ${a.fireAt ? a.fireAt.toLocaleString() : '?'}\n  ${a.id}`)
+      .join('\n');
+  },
   testAlarm3m: () => scheduleTestAlarm(3 * 60_000, '3분'), // 재부팅 복구 검증용
   testAlarm65m: () => scheduleTestAlarm(65 * 60_000, '65분'), // Doze 관통 검증용
   testReminder: async () => {
@@ -325,6 +333,10 @@ export default function Debug() {
       <View style={styles.row}>
         <Btn label="3분 뒤 알람 (재부팅 검증)" onPress={testAlarm3m} half />
         <Btn label="65분 뒤 알람 (Doze 검증)" onPress={testAlarm65m} half />
+      </View>
+      <View style={styles.row}>
+        <Btn label="10초 뒤 알람 (soundKey 01)" onPress={run(actions.testAlarmSound01)} half />
+        <Btn label="스누즈 목록 덤프" onPress={run(actions.dumpSnoozes)} half />
       </View>
       <Btn label="10초 뒤 리마인더 테스트 (① 조용한 알림)" onPress={testReminder} />
       <View style={styles.row}>

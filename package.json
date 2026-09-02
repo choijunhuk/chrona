@@ -9,7 +9,10 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "types": "supabase gen types typescript --linked > src/data/database.types.ts"
+    "types": "supabase gen types typescript --linked > src/data/database.types.ts",
+    "web:dev": "pnpm --filter @chrona/web dev",
+    "web:build": "pnpm --filter @chrona/web build",
+    "verify": "pnpm test && pnpm typecheck && pnpm lint && pnpm web:build"
   },
   "dependencies": {
     "@gorhom/bottom-sheet": "^5.2.14",

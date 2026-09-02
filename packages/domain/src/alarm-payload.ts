@@ -41,7 +41,9 @@ export function parseAlarmPayload(data: Record<string, unknown> | undefined): Al
     return typeof v === 'string' && v.length > 0 ? v : fallback;
   };
   const num = (k: string, fallback: number) => {
-    const n = Number(d[k]);
+    const v = d[k];
+    if (v === null || v === undefined || v === '') return fallback;
+    const n = Number(v);
     return Number.isFinite(n) ? n : fallback;
   };
   return {

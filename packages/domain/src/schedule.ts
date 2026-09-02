@@ -221,3 +221,49 @@ export function computeAlarmTimes(
   planned.sort((a, b) => a.fireAt.getTime() - b.fireAt.getTime());
   return planned.slice(0, limit);
 }
+
+/** 알람 1건을 식별하는 키 (건너뛰기·스누즈 추적용). 같은 occurrence의 reminder가 여럿이면 offset까지 포함 */
+export function alarmKey(p: AlarmPayload, fireAt?: Date): string {
+  return fireAt ? `${p.eventId}|${p.occurrenceStart}|${fireAt.toISOString()}` : `${p.eventId}|${p.occurrenceStart}`;
+}
+
+export type AlarmFilterOptions = {
+  now: Date;
+  /** 방해금지 종료 시각. 이 시각 이전 발화분은 전부 제외 */
+  quietUntil: Date | null;
+  /** 건너뛸 알람 키 (alarmKey(payload) 형식, fireAt 없는 버전) */
+  skippedKeys: string[];
+};
+
+/**
+ * 재계산 후처리 (stage-13): 방해금지 창 안의 알람과 "이번만 건너뛰기"된 알람 제거.
+ * 순수 함수 — rescheduler가 computeAlarmTimes 결과에 적용한다.
+ * 반환: 남은 알람 + 아직 유효한 skippedKeys(과거분 정리). limit 재적용은 호출자 몫이 아님(이미 30건 이하).
+ */
+export function applyAlarmFilters(
+  planned: PlannedAlarm[],
+  opts: AlarmFilterOptions
+): { planned: PlannedAlarm[]; liveSkippedKeys: string[] } {
+  const skipped = new Set(opts.skippedKeys);
+  const quiet = opts.quietUntil && opts.quietUntil.getTime() > opts.now.getTime() ? opts.quietUntil : null;
+  const out: PlannedAlarm[] = [];
+  const live = new Set<string>();
+  for (const p of planned) {
+    const key = alarmKey(p.payload);
+    if (skipped.has(key)) {
+      live.add(key);
+      continue;
+    }
+    if (quiet && p.fireAt.getTime() < quiet.getTime()) continue;
+    out.push(p);
+  }
+  // 과거 occurrence 키는 planned에 더 이상 없으므로 자연 소멸. 미래분만 유지
+  const liveSkippedKeys = opts.skippedKeys.filter((k) => live.has(k) || isFutureKey(k, opts.now));
+  return { planned: out, liveSkippedKeys: Array.from(new Set(liveSkippedKeys)) };
+}
+
+function isFutureKey(key: string, now: Date): boolean {
+  const iso = key.split('|')[1];
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) && t > now.getTime();
+}

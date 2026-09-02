@@ -60,3 +60,6 @@ web/.env
 
 # Vercel
 .vercel/
+
+# Playwright MCP 산출물 (스크린샷·트레이스)
+.playwright-mcp/

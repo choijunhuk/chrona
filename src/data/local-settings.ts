@@ -12,6 +12,12 @@ export type LocalSettings = {
   morningBriefingTime: string; // 'HH:MM'
   gradualVolume: boolean;
   examMode: boolean;
+  /** 방해금지(방학 모드): 이 시각(ISO)까지 모든 알람·알림 예약 안 함. null = 꺼짐 */
+  quietUntil: string | null;
+  /** "이번만 건너뛰기"로 무시할 알람 키 (domain alarmKey). 재계산 시 과거분 자동 정리 */
+  skippedAlarmKeys: string[];
+  /** 알람 자동 종료(분). 울린 채 방치 시 이 시간 뒤 자동 해제 + 놓친 알람 알림 */
+  alarmTimeoutMinutes: number;
 };
 
 export const LOCAL_DEFAULTS: LocalSettings = {
@@ -19,6 +25,9 @@ export const LOCAL_DEFAULTS: LocalSettings = {
   morningBriefingTime: '08:00',
   gradualVolume: false,
   examMode: false,
+  quietUntil: null,
+  skippedAlarmKeys: [],
+  alarmTimeoutMinutes: 10,
 };
 
 let cache: LocalSettings | null = null;

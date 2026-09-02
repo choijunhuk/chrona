@@ -67,9 +67,10 @@ export function expandForDisplay(
         // 종일 반복: date 기준 전개 (시각 개입 금지 — stage-5 §1-1)
         const starts = expandRule(e.rrule, fromDateOnly(e.startDate, tz), e.rruleUntil, range, tz);
         for (const s0 of starts) {
-          const sd = toDateOnly(s0, tz);
           const ov = ovByKey.get(`${e.id}:${s0.getTime()}`);
           if (ov?.isCancelled) continue;
+          // 회차 이동 override도 반영 — 종일은 날짜만 취한다 (§7.2: 시각 개입 금지)
+          const sd = toDateOnly(ov?.newStart ?? s0, tz);
           out.push({
             event: e,
             start: null,

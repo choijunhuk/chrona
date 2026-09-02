@@ -29,6 +29,7 @@ import {
   type RepeatConfig,
 } from '@/domain/rrule-ui';
 import { useUpsertOverride } from '@/data/hooks/overrides';
+import { SOUND_OPTIONS, soundLabel } from '@/native/alarm';
 import { asDateOnly, formatTimeLabel, fromDateOnly, isDateOnly, toDateOnly } from '@/domain/time';
 import { Button } from '@/ui/components/button';
 import { ColorDot } from '@/ui/components/color-dot';
@@ -41,8 +42,10 @@ const TZ = 'Asia/Seoul';
 
 type PickerTarget = 'startDate' | 'startTime' | 'endDate' | 'endTime' | 'untilDate' | null;
 
+type EditorKind = 'schedule' | 'task' | 'timetable';
+
 type FormInitial = {
-  kind: 'schedule' | 'task';
+  kind: EditorKind;
   isDone: boolean;
   repeat: RepeatConfig | 'custom';
   rruleRaw: string | null;
@@ -50,6 +53,9 @@ type FormInitial = {
   title: string;
   memo: string;
   location: string;
+  /** timetable 전용 — 편집해도 kind가 바뀌지 않게 함께 보존 */
+  professor: string;
+  semesterId: string | null;
   allDay: boolean;
   startsAt: Date;
   endsAt: Date;
@@ -100,7 +106,8 @@ export function EventEditor() {
   const initial: FormInitial =
     !isNew && e
       ? {
-          kind: e.kind === 'task' ? ('task' as const) : ('schedule' as const),
+          // ★ timetable을 schedule로 접지 않는다 — 접으면 semester_id가 지워져 격자에서 사라진다
+          kind: (e.kind === 'task' || e.kind === 'timetable' ? e.kind : 'schedule') as EditorKind,
           isDone: e.isDone,
           repeat: fromRRuleString(e.rrule),
           rruleRaw: e.rrule,
@@ -108,6 +115,8 @@ export function EventEditor() {
           title: e.title,
           memo: e.memo ?? '',
           location: e.location ?? '',
+          professor: e.professor ?? '',
+          semesterId: e.semesterId,
           allDay: e.allDay,
           startsAt:
             e.kind === 'task'
@@ -138,6 +147,8 @@ export function EventEditor() {
           title: '',
           memo: '',
           location: '',
+          professor: '',
+          semesterId: null,
           allDay: false,
           startsAt: defaultStart,
           endsAt: defaultEnd,
@@ -190,13 +201,14 @@ function EventForm({
   const [title, setTitle] = useState(initial.title);
   const [memo, setMemo] = useState(initial.memo);
   const [location, setLocation] = useState(initial.location);
+  const [professor, setProfessor] = useState(initial.professor);
   const [allDay, setAllDay] = useState(initial.allDay);
   const [startsAt, setStartsAt] = useState<Date>(initial.startsAt);
   const [endsAt, setEndsAt] = useState<Date>(initial.endsAt);
   const [categoryId, setCategoryId] = useState<string | null>(initial.categoryId);
   const [color, setColor] = useState<string | null>(initial.color);
   const [picker, setPicker] = useState<PickerTarget>(null);
-  const [kind, setKind] = useState<'schedule' | 'task'>(initial.kind);
+  const [kind, setKind] = useState<EditorKind>(initial.kind);
   const [repeat, setRepeat] = useState<RepeatConfig>(
     initial.repeat === 'custom' ? { freq: 'none', weekdays: [], count: null } : initial.repeat
   );
@@ -227,11 +239,59 @@ function EventForm({
   const [showPresets, setShowPresets] = useState(false);
   const saveReminders = useSaveReminders();
 
+  // 같은 offset+mode가 둘이면 저장 diff(reminders.ts)가 짝을 못 짓는다 — 애초에 못 만들게 막는다
+  const hasReminder = (offsetMinutes: number, mode: 'notify' | 'alarm') =>
+    reminders.some((r) => r.offsetMinutes === offsetMinutes && r.mode === mode);
+
+  const toggleReminderMode = (i: number) => {
+    const cur = reminders[i];
+    const next = cur.mode === 'alarm' ? 'notify' : 'alarm';
+    if (hasReminder(cur.offsetMinutes, next)) {
+      ToastAndroid.show('같은 알림이 이미 있어요', ToastAndroid.SHORT);
+      return;
+    }
+    setReminders((rs) => rs.map((x, j) => (j === i ? { ...x, mode: next } : x)));
+  };
+
+  const cycleReminderSound = (i: number) => {
+    haptics.selection();
+    setReminders((rs) =>
+      rs.map((x, j) => {
+        if (j !== i) return x;
+        const at = SOUND_OPTIONS.findIndex((o) => o.key === x.soundKey);
+        return { ...x, soundKey: SOUND_OPTIONS[(at + 1) % SOUND_OPTIONS.length].key };
+      })
+    );
+  };
+
   const buildDraft = (): EventDraft => {
+    if (kind === 'timetable') {
+      // ★ 시간표 과목 편집: kind/semesterId/rrule을 그대로 보존한다 (schedule로 바뀌면 격자에서 사라진다)
+      return {
+        kind: 'timetable',
+        title: title.trim(),
+        memo: memo.trim() || null,
+        categoryId,
+        color,
+        allDay: false,
+        startsAt,
+        endsAt,
+        startDate: null,
+        endDate: null,
+        rrule: initial.rruleRaw,
+        rruleUntil: initial.untilDate,
+        dueAt: null,
+        isDone: false,
+        doneAt: null,
+        semesterId: initial.semesterId,
+        location: location.trim() || null,
+        professor: professor.trim() || null,
+      };
+    }
     if (kind === 'task') {
       return {
         kind: 'task',
-        title: title.trim() || '(제목 없음)',
+        title: title.trim(),
         memo: memo.trim() || null,
         categoryId,
         color,
@@ -252,7 +312,7 @@ function EventForm({
     }
     return {
       kind: 'schedule',
-      title: title.trim() || '(제목 없음)',
+      title: title.trim(),
       memo: memo.trim() || null,
       categoryId,
       color,
@@ -271,6 +331,17 @@ function EventForm({
       location: location.trim() || null,
       professor: null,
     };
+  };
+
+  /** 저장 전 검증 (stage-13). 위반이면 사유 문자열, 통과면 null */
+  const validate = (): string | null => {
+    if (!title.trim()) return '제목을 입력하세요';
+    if (kind === 'task') return null;
+    if (allDay) {
+      // 종일은 날짜만 비교 (§7.2) — 같은 날은 허용
+      return toDateOnly(endsAt, TZ) < toDateOnly(startsAt, TZ) ? '종료가 시작보다 빠릅니다' : null;
+    }
+    return endsAt.getTime() <= startsAt.getTime() ? '종료가 시작보다 빠릅니다' : null;
   };
 
   const afterSave = () => {
@@ -297,6 +368,8 @@ function EventForm({
         newEnd: new Date(startsAt.getTime() + durationMs),
         isCancelled: false,
       });
+      // 알림은 회차가 아니라 이벤트 단위다 — 범위와 무관하게 항상 저장한다
+      await saveReminders.mutateAsync({ eventId: id, drafts: reminders });
       return;
     }
     if (scope === 'future' && occurrenceStart) {
@@ -320,6 +393,11 @@ function EventForm({
   };
 
   const save = async () => {
+    const invalid = validate();
+    if (invalid) {
+      ToastAndroid.show(invalid, ToastAndroid.SHORT);
+      return;
+    }
     try {
       if (isNew) {
         const created = await createMutation.mutateAsync(buildDraft());
@@ -411,8 +489,14 @@ function EventForm({
       else next.setHours(date.getHours(), date.getMinutes(), 0, 0);
       return next;
     };
-    if (target === 'startDate') setStartsAt((p) => apply(p, 'date'));
-    if (target === 'startTime') setStartsAt((p) => apply(p, 'time'));
+    if (target === 'startDate' || target === 'startTime') {
+      const next = apply(startsAt, target === 'startDate' ? 'date' : 'time');
+      // 시작을 뒤로 밀면 종료도 따라간다 — 기존 소요 시간 유지 (되돌려 입력하게 만들지 않는다)
+      const durationMs = Math.max(endsAt.getTime() - startsAt.getTime(), 0);
+      setStartsAt(next);
+      if (endsAt.getTime() <= next.getTime()) setEndsAt(new Date(next.getTime() + durationMs));
+      return;
+    }
     if (target === 'endDate') setEndsAt((p) => apply(p, 'date'));
     if (target === 'endTime') setEndsAt((p) => apply(p, 'time'));
     if (target === 'untilDate') setUntilDate(apply(startsAt, 'date'));
@@ -426,7 +510,7 @@ function EventForm({
       contentContainerStyle={[styles.content, { paddingTop: insets.top + spacing.lg }]}
     >
       <AppText variant="title">
-        {isNew ? '새로 만들기' : kind === 'task' ? '과제 편집' : '일정 편집'}
+        {isNew ? '새로 만들기' : kind === 'task' ? '과제 편집' : kind === 'timetable' ? '수업 편집' : '일정 편집'}
       </AppText>
 
       {isNew && (
@@ -490,7 +574,7 @@ function EventForm({
           />
         </View>
       )}
-      {kind === 'schedule' && (
+      {kind !== 'task' && (
       <View style={styles.rowBetween}>
         <AppText color="textSub">종료</AppText>
         <View style={styles.pickerRow}>
@@ -583,25 +667,40 @@ function EventForm({
         알림
       </AppText>
       {reminders.map((r, i) => (
-        <View key={i} style={[styles.reminderRow, r.mode === 'alarm' && styles.reminderAlarm]}>
+        <View
+          key={i}
+          style={[
+            styles.reminderRow,
+            r.mode === 'alarm' && styles.reminderAlarm,
+            !r.enabled && styles.reminderOff,
+          ]}
+        >
           <AppText nums style={styles.reminderLabel}>
             {r.mode === 'alarm' ? '⏰ ' : ''}
             {offsetLabel(r.offsetMinutes)}
           </AppText>
           <Pressable
             style={[styles.modeChip, r.mode === 'alarm' && styles.modeChipAlarm]}
-            onPress={() =>
-              setReminders((rs) =>
-                rs.map((x, j) =>
-                  j === i ? { ...x, mode: x.mode === 'alarm' ? 'notify' : 'alarm' } : x
-                )
-              )
-            }
+            onPress={() => toggleReminderMode(i)}
           >
             <AppText variant="caption" color={r.mode === 'alarm' ? 'white' : 'textSub'}>
               {r.mode === 'alarm' ? '알람' : '알림'}
             </AppText>
           </Pressable>
+          {/* 알람음: 탭할 때마다 다음 음으로 (피커 모달 없이) */}
+          <Pressable style={styles.modeChip} onPress={() => cycleReminderSound(i)}>
+            <AppText variant="caption" color="textSub">
+              {soundLabel(r.soundKey)}
+            </AppText>
+          </Pressable>
+          <Switch
+            value={r.enabled}
+            onValueChange={(v) =>
+              setReminders((rs) => rs.map((x, j) => (j === i ? { ...x, enabled: v } : x)))
+            }
+            trackColor={{ true: colors.accent, false: colors.surfaceAlt }}
+            thumbColor={colors.text}
+          />
           <Pressable
             hitSlop={8}
             onPress={() => setReminders((rs) => rs.filter((_, j) => j !== i))}
@@ -617,6 +716,11 @@ function EventForm({
               key={p.minutes}
               style={styles.chip}
               onPress={() => {
+                setShowPresets(false);
+                if (hasReminder(p.minutes, 'notify')) {
+                  ToastAndroid.show('같은 알림이 이미 있어요', ToastAndroid.SHORT);
+                  return;
+                }
                 setReminders((rs) => [
                   ...rs,
                   {
@@ -627,7 +731,6 @@ function EventForm({
                     enabled: true,
                   },
                 ]);
-                setShowPresets(false);
               }}
             >
               <AppText variant="caption">{p.label}</AppText>
@@ -673,12 +776,21 @@ function EventForm({
         ))}
       </View>
 
-      {kind === 'schedule' && (
+      {kind !== 'task' && (
         <TextInput
           style={styles.input}
           value={location}
           onChangeText={setLocation}
-          placeholder="장소"
+          placeholder={kind === 'timetable' ? '강의실' : '장소'}
+          placeholderTextColor={colors.textDim}
+        />
+      )}
+      {kind === 'timetable' && (
+        <TextInput
+          style={styles.input}
+          value={professor}
+          onChangeText={setProfessor}
+          placeholder="교수"
           placeholderTextColor={colors.textDim}
         />
       )}
@@ -754,6 +866,7 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   // 알람 모드는 시각적으로 강조 — 실수로 켜면 새벽에 울린다 (stage-3 §1-5)
   reminderAlarm: { borderColor: colors.accent, backgroundColor: `${colors.accent}14` },
+  reminderOff: { opacity: 0.45 },
   reminderLabel: { flex: 1 },
   modeChip: {
     borderColor: colors.border,

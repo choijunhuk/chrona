@@ -3,6 +3,7 @@
   --bg: #f6f7fa; --surface: #ffffff; --surface-alt: #eef0f5; --border: #e2e5ec;
   --text: #191b20; --text-sub: #616878; --text-dim: #a3a9b7;
   --accent: #5b6ae8; --danger: #e05252; --success: #2fa97c;
+  --timecol: 56px;  /* 시간축 폭 — 주간 격자 템플릿을 App.tsx가 인라인으로 짤 때 쓴다 */
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -29,10 +30,12 @@ input, select { font: inherit; background: var(--surface-alt); color: var(--text
 .seg { display: flex; gap: 4px; }
 .hint { color: var(--text-dim); font-size: 12px; }
 
-.week { flex: 1; display: grid; grid-template-columns: 56px repeat(7, 1fr); overflow-y: auto; position: relative; }
+.week { flex: 1; display: grid; overflow-y: auto; position: relative; }
 .week .timecol { border-right: 1px solid var(--border); }
 .week .timecell { height: 48px; font-size: 11px; color: var(--text-dim); text-align: right; padding-right: 6px; transform: translateY(-6px); font-variant-numeric: tabular-nums; }
-.daycol { border-right: 1px solid var(--border); position: relative; }
+/* touch-action: none — 드래그 생성/이동이 브라우저 스크롤에 먹히지 않게 (stage-13).
+   세로 스크롤은 시간축(.timecol)과 종일 행에서 — 거긴 기본값 그대로 둔다 */
+.daycol { border-right: 1px solid var(--border); position: relative; touch-action: none; }
 .daycol .hourline { height: 48px; border-bottom: 1px solid var(--border); }
 .dayhead { position: sticky; top: 0; background: var(--bg); z-index: 3; text-align: center; padding: 8px 0 6px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-sub); }
 .dayhead.today .num { background: var(--accent); color: #fff; border-radius: 999px; padding: 2px 8px; }
@@ -42,7 +45,7 @@ input, select { font: inherit; background: var(--surface-alt); color: var(--text
 .evblock .t { font-weight: 600; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .evblock .resize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
 .ghost { position: absolute; left: 2px; right: 4px; background: color-mix(in srgb, var(--accent) 25%, transparent); border: 1.5px dashed var(--accent); border-radius: 6px; pointer-events: none; }
-.alldayrow { display: grid; grid-template-columns: 56px repeat(7, 1fr); border-bottom: 1px solid var(--border); min-height: 28px; }
+.alldayrow { display: grid; border-bottom: 1px solid var(--border); min-height: 28px; }
 .alldayrow .chip { margin: 3px; padding: 1px 8px; border-radius: 999px; font-size: 11px; background: var(--surface-alt); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
 .nowline { position: absolute; left: 0; right: 0; height: 2px; background: var(--accent); z-index: 2; pointer-events: none; }
 
@@ -80,10 +83,11 @@ input, select { font: inherit; background: var(--surface-alt); color: var(--text
 .hint.saved { color: var(--success); }
 .hint.danger { color: var(--danger); }
 .notice.confirmed { background: color-mix(in srgb, var(--success) 18%, var(--surface)); color: var(--text); font-weight: 600; }
-.mgrid { display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; user-select: none; }
+.mgridwrap { overflow-x: auto; }
+.mgrid { display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; user-select: none; touch-action: none; }
 .mgh { background: var(--bg); text-align: center; padding: 6px 2px; font-size: 12px; color: var(--text-sub); }
 .mgt { background: var(--bg); text-align: right; padding: 0 6px; font-size: 11px; color: var(--text-dim); line-height: 20px; font-variant-numeric: tabular-nums; }
-.mslot { height: 20px; cursor: pointer; }
+.mslot { height: 20px; cursor: pointer; touch-action: none; }
 .mslot.mine { box-shadow: inset 0 0 0 2px var(--accent); }
 .mslot.locked { cursor: default; }
 .meetinfo { min-height: 18px; }
@@ -92,3 +96,39 @@ input, select { font: inherit; background: var(--surface-alt); color: var(--text
 .datechips .chip { padding: 3px 10px; border-radius: 999px; font-size: 11px; background: var(--surface-alt); }
 .pollitem { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
 .pollitem a { color: var(--accent); font-weight: 600; text-decoration: none; }
+
+/* 조회 실패 안내 — 빈 달력이 "일정 없음"으로 오독되지 않게 (stage-13) */
+.notice.error { background: color-mix(in srgb, var(--danger) 15%, var(--surface)); color: var(--text); }
+
+/* 토스트 (stage-13) — 뮤테이션 실패 알림. React 트리 밖에서 document.body에 붙는다 */
+.toasts { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 50; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { max-width: 90vw; padding: 10px 14px; font-size: 13px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--danger); box-shadow: 0 6px 20px rgb(0 0 0 / 0.18); }
+
+/* ── 모바일 (stage-13) ─────────────────────────────────
+   주간은 앵커부터 3일만 (열 수는 App.tsx가 인라인 템플릿으로 정한다),
+   편집 패널은 하단 시트, 약속 그리드는 가로 스크롤 + 시간축 고정 */
+@media (max-width: 640px) {
+  :root { --timecol: 44px; }
+
+  .app { flex-direction: column; }
+  .topbar { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+  .topbar h1 { font-size: 16px; flex: 1 0 100%; }
+  .topbar .hint { display: none; }  /* 단축키 안내 — 키보드 없는 화면에선 자리만 먹는다 */
+  .topbar .spacer { display: none; }
+  .notice { margin: 8px 12px 0; }
+  .week .timecell { font-size: 10px; padding-right: 4px; }
+
+  .panel {
+    position: fixed; inset: auto 0 0 0; width: auto; max-height: 72vh;
+    border-left: none; border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0; padding: 16px 16px 24px; z-index: 20;
+    box-shadow: 0 -8px 24px rgb(0 0 0 / 0.18);
+  }
+
+  .meetpage { padding: 16px 12px 32px; }
+  /* sticky는 클리핑 조상 안에서 죽는다 — 스크롤 담당은 .mgridwrap로 넘긴다 */
+  .mgrid { min-width: max-content; overflow: visible; }
+  .mgrid > .mgh:first-child, .mgt { position: sticky; left: 0; z-index: 2; }
+  .mslot { height: 40px; }   /* 손가락으로 칠할 수 있는 최소 높이 */
+  .mgt { line-height: 40px; }
+}

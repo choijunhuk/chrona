@@ -1,0 +1,30 @@
+# Chrona CI (stage-13). 로컬 게이트(pnpm verify)와 같은 명령을 같은 순서로 돌린다.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # setup-node의 pnpm 캐시가 pnpm 바이너리를 먼저 찾는다 — corepack이 앞
+      - run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm test
+      - run: pnpm typecheck
+      - run: pnpm lint
+
+      # 웹은 tsc -b + vite build. Supabase 키는 런타임에만 필요해 빌드엔 없어도 된다
+      - run: pnpm web:build

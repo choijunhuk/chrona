@@ -1,7 +1,7 @@
 /** 순수 알람 탭 — 시계 앱 스타일 (stage-3 §1-6) */
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -109,7 +109,17 @@ export function AlarmsScreen() {
             <Pressable
               hitSlop={8}
               style={styles.delete}
-              onPress={() => deleteAlarm.mutate(item.id)}
+              onPress={() =>
+                // 실수 탭으로 알람이 사라지면 다음 날 아침에야 알게 된다
+                Alert.alert('알람 삭제', `${item.time} 알람을 삭제할까요?`, [
+                  { text: '취소', style: 'cancel' },
+                  {
+                    text: '삭제',
+                    style: 'destructive',
+                    onPress: () => deleteAlarm.mutate(item.id),
+                  },
+                ])
+              }
             >
               <AppText color="textDim">✕</AppText>
             </Pressable>

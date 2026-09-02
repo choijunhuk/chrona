@@ -10,7 +10,7 @@
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
@@ -19,15 +19,17 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 
+import { localSettingsCache } from '@/data/local-settings';
 import { parseAlarmPayload } from '@/domain/alarm-payload';
-import { dismissAlarm, snoozeAlarm } from '@/native/alarm';
+import { dismissAlarm, postMissedAlarm, setAlarmRingScreenOpen, snoozeAlarm } from '@/native/alarm';
+import { haptics } from '@/ui/components/haptics';
 import { colors } from '@/ui/tokens';
 
 const TRACK_WIDTH = 300;
 const THUMB_SIZE = 64;
 const SLIDE_MAX = TRACK_WIDTH - THUMB_SIZE - 8;
 const DISMISS_THRESHOLD = SLIDE_MAX * 0.85;
-const AUTO_DISMISS_AFTER_MS = 60_000;
+const LONG_PRESS_MS = 1500; // 오조작 방지 — 슬라이드 제스처가 안 먹을 때의 대비책
 
 export default function AlarmRing() {
   const router = useRouter();
@@ -46,7 +48,7 @@ export default function AlarmRing() {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.replace('/debug');
+      router.replace('/'); // cold start(풀스크린 알람)로 진입한 경우 — /debug 로 떨어뜨리지 않는다
     }
   }, [router]);
 
@@ -61,17 +63,36 @@ export default function AlarmRing() {
     finish();
   }, [payload, notificationId, snoozeExhausted, finish]);
 
-  // 스누즈 소진 상태로 울렸는데 방치되면 자동 해제 + 놓친 알람 (마스터 §3.8)
+  // 울린 채 방치되면 자동 종료 + "놓친 알람" (stage-13 §3). 스누즈 소진 여부와 무관하다.
+  // 설정은 동기 캐시로만 읽는다 — 이 화면은 AsyncStorage 조회를 하지 않는다 (master §3.5)
   useEffect(() => {
-    if (!snoozeExhausted) return;
-    const t = setTimeout(async () => {
-      if (doneRef.current) return;
-      await snoozeAlarm(payload, notificationId); // count >= max → 놓친 알람 알림 + 해제
-      finish();
-    }, AUTO_DISMISS_AFTER_MS);
+    const t = setTimeout(
+      async () => {
+        if (doneRef.current) return;
+        await dismissAlarm(notificationId);
+        await postMissedAlarm(payload);
+        finish();
+      },
+      localSettingsCache().alarmTimeoutMinutes * 60_000
+    );
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 이 화면이 떠 있는 동안 새 알람이 와도 중복 push 하지 않도록 알린다 (master §3.9)
+  useEffect(() => {
+    setAlarmRingScreenOpen(true);
+    return () => setAlarmRingScreenOpen(false);
+  }, []);
+
+  // 뒤로가기 = 해제. 기본 동작(그냥 화면 이탈)이면 알람이 계속 울린다
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      void onDismiss();
+      return true;
+    });
+    return () => sub.remove();
+  }, [onDismiss]);
 
   // 밀어서 해제
   const translateX = useSharedValue(0);
@@ -126,6 +147,19 @@ export default function AlarmRing() {
             </Animated.View>
           </GestureDetector>
         </View>
+
+        {/* 슬라이드가 안 먹을 때의 대비책. 1.5초 길게 눌러야 동작 — 짧은 오탭으로는 안 꺼진다 */}
+        <Pressable
+          onLongPress={() => {
+            haptics.selection();
+            void onDismiss();
+          }}
+          delayLongPress={LONG_PRESS_MS}
+          disabled={done}
+          style={({ pressed }) => [styles.fallback, pressed && styles.fallbackPressed]}
+        >
+          <Text style={styles.fallbackText}>해제 (1.5초 길게 누르기)</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -171,4 +205,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   thumbText: { color: colors.black, fontSize: 20, fontWeight: '700' },
+  fallback: { paddingHorizontal: 16, paddingVertical: 8 },
+  fallbackPressed: { opacity: 0.5 },
+  fallbackText: { color: colors.textDim, fontSize: 14 },
 });
