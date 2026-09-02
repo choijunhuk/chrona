@@ -42,6 +42,21 @@ const withAlarmManifest = (config) =>
     mainActivity.$['android:turnScreenOn'] = 'true';
     mainActivity.$['android:launchMode'] = 'singleTask';
 
+    // Notifee의 ForegroundService는 기본 foregroundServiceType="shortService" (Android 14+ 3분 제한).
+    // 알람이 3분 넘게 울리면 "Short FGS ANR" → 앱 강제 종료. mediaPlayback 타입으로 덮어쓴다 (stage-13 실기기 발견).
+    const app = manifest.manifest.application?.[0];
+    if (app) {
+      app.service = app.service ?? [];
+      let svc = app.service.find((s) => s.$['android:name'] === 'app.notifee.core.ForegroundService');
+      if (!svc) {
+        svc = { $: { 'android:name': 'app.notifee.core.ForegroundService' } };
+        app.service.push(svc);
+      }
+      svc.$['android:foregroundServiceType'] = 'mediaPlayback';
+      svc.$['tools:replace'] = 'android:foregroundServiceType';
+      manifest.manifest.$['xmlns:tools'] = 'http://schemas.android.com/tools';
+    }
+
     return mod;
   });
 

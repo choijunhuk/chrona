@@ -9,6 +9,7 @@
  * - 알람 충돌 정책: 새 알람이 이전 알람을 덮어쓴다 (마스터 §3.9)
  */
 import notifee, {
+  AndroidForegroundServiceType,
   AndroidCategory,
   AndroidImportance,
   AndroidStyle,
@@ -152,6 +153,8 @@ export async function scheduleAlarm(
         ongoing: true,
         autoCancel: false,
         asForegroundService: true,
+        // shortService(3분 제한) 회피 — manifest 타입은 config plugin이 mediaPlayback으로 덮어씀
+        foregroundServiceTypes: [AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK],
         lightUpScreen: true,
         vibrationPattern: VIBRATION_PATTERN,
         color: payload.colorHex,
