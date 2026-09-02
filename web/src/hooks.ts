@@ -11,8 +11,11 @@ import {
   toEventInsert,
 } from '@app-data/mappers';
 import type { Category, ChronaEvent, EventOverride, MeetPollInfo } from '@chrona/domain';
+// 값은 배럴이 아니라 모듈 직접 — 배럴을 값으로 import하면 rrule이 참여자 청크까지 따라온다
+import { toDateOnly } from '@chrona/domain/time';
 
 import { supabase } from './supabase';
+import { toast, toastError } from './toast';
 
 const TZ = 'Asia/Seoul';
 
@@ -29,6 +32,11 @@ export function useEvents(range: { from: Date; to: Date }) {
   return useQuery({
     queryKey: ['events', range.from.toISOString(), range.to.toISOString()],
     queryFn: async (): Promise<ChronaEvent[]> => {
+      // 종일·과제 가지도 반드시 범위로 묶는다 (stage-13). 묶지 않으면 계정의 전 종일 일정과
+      // 전 과제를 매 조회마다 받아온다 — 학기가 쌓이면 그대로 느려진다.
+      // 종일 일정은 date 컬럼이라 KST 달력 날짜로 비교한다 (master §7.2)
+      const fromD = toDateOnly(range.from, TZ);
+      const toD = toDateOnly(range.to, TZ);
       const { data, error } = await supabase
         .from('events')
         .select('*')
@@ -37,8 +45,9 @@ export function useEvents(range: { from: Date; to: Date }) {
           [
             `rrule.not.is.null`,
             `and(all_day.eq.false,starts_at.lte.${range.to.toISOString()},ends_at.gte.${range.from.toISOString()})`,
-            `all_day.eq.true`,
-            `kind.eq.task`,
+            `and(all_day.eq.true,end_date.not.is.null,start_date.lte.${toD},end_date.gte.${fromD})`,
+            `and(all_day.eq.true,end_date.is.null,start_date.gte.${fromD},start_date.lte.${toD})`,
+            `and(kind.eq.task,due_at.gte.${range.from.toISOString()},due_at.lte.${range.to.toISOString()})`,
           ].join(',')
         );
       if (error) throw error;
@@ -89,6 +98,7 @@ export function useSaveEvent() {
       if (error) throw error;
       return (data as { id: string }).id;
     },
+    onError: toastError('일정 저장 실패'),
     onSettled: () => void qc.invalidateQueries({ queryKey: ['events'] }),
   });
 }
@@ -103,6 +113,7 @@ export function useDeleteEvent() {
         .eq('id', id);
       if (error) throw error;
     },
+    onError: toastError('일정 삭제 실패'),
     onSettled: () => void qc.invalidateQueries({ queryKey: ['events'] }),
   });
 }
@@ -130,6 +141,7 @@ export function useUpsertOverride() {
       );
       if (error) throw error;
     },
+    onError: toastError('회차 저장 실패'),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['overrides'] });
       void qc.invalidateQueries({ queryKey: ['events'] });
@@ -175,6 +187,26 @@ export function useMeetPoll(token: string) {
   });
 }
 
+/** RPC가 이름 선점 충돌에 쓰는 메시지 (0006) — 화면에서 안내 문구로 바꾼다 */
+export const NAME_TAKEN = 'name_taken';
+
+/**
+ * 브라우저별 고정 키. 이 키를 처음 쓴 사람만 그 이름의 응답을 고칠 수 있다 (0006).
+ * 로그인이 없는 화면이라 이게 유일한 소유 증명 — localStorage가 막히면 키 없이 보낸다.
+ */
+function meetClientKey(): string | undefined {
+  try {
+    let key = localStorage.getItem('chrona.meet-client-key');
+    if (!key) {
+      key = crypto.randomUUID();
+      localStorage.setItem('chrona.meet-client-key', key);
+    }
+    return key;
+  } catch {
+    return undefined;
+  }
+}
+
 export function useSubmitMeetResponse(token: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -183,8 +215,14 @@ export function useSubmitMeetResponse(token: string) {
         p_token: token,
         p_name: name,
         p_slots: slots,
+        p_client_key: meetClientKey(),
       });
       if (error) throw error;
+    },
+    // 이름 충돌은 화면에 인라인으로 뜬다 — 토스트까지 겹치면 시끄럽다
+    onError: (e: Error) => {
+      if (e.message === NAME_TAKEN) return;
+      toastError('응답 저장 실패')(e);
     },
     onSettled: () => void qc.invalidateQueries({ queryKey: ['meet-poll', token] }),
   });
@@ -243,6 +281,7 @@ export function useCreatePoll() {
       });
       if (error) throw error;
     },
+    onError: toastError('약속 생성 실패'),
     onSettled: () => void qc.invalidateQueries({ queryKey: ['meet-polls'] }),
   });
 }
@@ -257,6 +296,7 @@ export function useDeletePoll() {
         .eq('id', id);
       if (error) throw error;
     },
+    onError: toastError('약속 삭제 실패'),
     onSettled: () => void qc.invalidateQueries({ queryKey: ['meet-polls'] }),
   });
 }
@@ -289,7 +329,9 @@ export function useConfirmMeetSlot() {
         .from('events')
         .insert(toEventInsert({ ...emptyDraft(), title: d.title, startsAt, endsAt }, userId));
       if (insertError) throw insertError;
+      toast('약속을 확정하고 일정에 넣었어요');
     },
+    onError: toastError('확정 실패'),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['meet-poll'] });
       void qc.invalidateQueries({ queryKey: ['meet-polls'] });

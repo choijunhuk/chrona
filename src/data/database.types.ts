@@ -141,6 +141,7 @@ type MeetResponseRow = {
   poll_id: string;
   participant_name: string;
   slots: string[];
+  client_key: string | null; // 0006 — 브라우저별 이름 선점 키
   updated_at: string;
 };
 
@@ -179,9 +180,12 @@ export type Database = {
     Functions: {
       meet_get_poll: { Args: { p_token: string }; Returns: unknown };
       meet_submit_response: {
-        Args: { p_token: string; p_name: string; p_slots: string[] };
+        // p_client_key는 0006에서 추가된 default null 인자 — 옛 클라이언트도 그대로 동작
+        Args: { p_token: string; p_name: string; p_slots: string[]; p_client_key?: string };
         Returns: undefined;
       };
+      // 백업 복원 단일 트랜잭션 (0006). payload는 exportBackup이 만든 JSON 그대로
+      restore_backup: { Args: { payload: Record<string, unknown> }; Returns: undefined };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

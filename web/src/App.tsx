@@ -39,7 +39,7 @@ import {
   useSession,
   useUpsertOverride,
 } from './hooks';
-import { MeetPage, MeetPanel, meetTokenFromHash } from './Meet';
+import { MeetPanel } from './Meet';
 import { supabase } from './supabase';
 
 const TZ = 'Asia/Seoul';
@@ -62,25 +62,27 @@ type ViewMode = 'week' | 'month';
 /** 월간 셀에 접히지 않고 들어가는 일정 수 — 넘치면 '+N' */
 const MONTH_CELL_ITEMS = 3;
 
+/**
+ * 캘린더 번들의 진입점. `#/meet/<token>` 라우팅은 main.tsx가 맡는다 (stage-13) —
+ * 참여자가 이 파일(= 캘린더·반복 전개·통계)을 통째로 내려받지 않게 하려는 분리다.
+ */
 export default function App() {
-  const hash = useHash();
   const { data: session, isPending } = useSession();
-  // 참여자 화면은 로그인 게이트 앞에 선다 — 계정 없이 열려야 하는 유일한 화면
-  const meetToken = meetTokenFromHash(hash);
-  if (meetToken) return <MeetPage token={meetToken} />;
   if (isPending) return null;
   if (!session) return <Auth />;
   return <Calendar />;
 }
 
-function useHash(): string {
-  const [hash, setHash] = useState(() => window.location.hash);
+/** ≤640px 여부. CSS 브레이크포인트와 같은 값을 쓴다 (styles.css @media) */
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 640px)').matches);
   useEffect(() => {
-    const on = () => setHash(window.location.hash);
-    window.addEventListener('hashchange', on);
-    return () => window.removeEventListener('hashchange', on);
+    const mq = window.matchMedia('(max-width: 640px)');
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
   }, []);
-  return hash;
+  return narrow;
 }
 
 function Auth() {
@@ -131,8 +133,18 @@ function Calendar() {
   const [meetOpen, setMeetOpen] = useState(false);
   const [drag, setDrag] = useState<DragState>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const dragPointer = useRef<number | null>(null);
 
-  const days = useMemo(() => weekOf(anchor), [anchor]);
+  // 좁은 화면에서 7열은 한 칸이 40px대로 쪼그라든다 — 앵커부터 3일만 보여주고 3일씩 이동한다
+  const narrow = useNarrow();
+  const days = useMemo(
+    () => (narrow ? [0, 1, 2].map((i) => addDaysOnly(anchor, i)) : weekOf(anchor)),
+    [anchor, narrow]
+  );
+  const cols = useMemo(
+    () => ({ gridTemplateColumns: `var(--timecol) repeat(${days.length}, 1fr)` }),
+    [days.length]
+  );
   const grid = useMemo(() => {
     const { year, month } = monthOf(anchor);
     return monthGrid(year, month);
@@ -153,9 +165,11 @@ function Calendar() {
     [visibleDays]
   );
 
-  const { data: events } = useEvents(range);
+  const { data: events, error: eventsError } = useEvents(range);
   const { data: overrides } = useOverrides();
-  const { data: categories } = useCategories();
+  const { data: categories, error: categoriesError } = useCategories();
+  // 빈 달력은 "일정이 없다"로 읽힌다 — 조회가 깨졌으면 그렇게 말한다
+  const loadError = eventsError ?? categoriesError;
   const saveEvent = useSaveEvent();
   const upsertOverride = useUpsertOverride();
 
@@ -203,17 +217,18 @@ function Calendar() {
       .map((it) => ({ categoryId: it.event.categoryId, start: it.start!, end: it.end }));
     const daily = plannedVsActual(occ, [], statDays, TZ);
     const planned = daily.reduce((a, d) => a + d.plannedMinutes, 0);
-    const label = view === 'week' ? '이번 주' : '이번 달';
+    const label = view === 'month' ? '이번 달' : narrow ? '이 3일' : '이번 주';
     return `${label} 계획 ${Math.floor(planned / 60)}시간 ${planned % 60}분`;
-  }, [items, statDays, view]);
+  }, [items, statDays, view, narrow]);
 
+  const step = narrow ? 3 : 7;
   const goPrev = useCallback(
-    () => setAnchor((a) => (view === 'week' ? addDaysOnly(a, -7) : shiftMonth(a, -1))),
-    [view]
+    () => setAnchor((a) => (view === 'week' ? addDaysOnly(a, -step) : shiftMonth(a, -1))),
+    [view, step]
   );
   const goNext = useCallback(
-    () => setAnchor((a) => (view === 'week' ? addDaysOnly(a, 7) : shiftMonth(a, 1))),
-    [view]
+    () => setAnchor((a) => (view === 'week' ? addDaysOnly(a, step) : shiftMonth(a, 1))),
+    [view, step]
   );
 
   /** 월간에서 날짜를 고르면 그 주의 주간 뷰로 (앱 캘린더의 월→주 전환과 같은 동작) */
@@ -246,15 +261,36 @@ function Calendar() {
     return Math.max(0, Math.min(24 * 60, min));
   };
 
-  const onGridMouseDown = (day: DateOnly, e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.evblock')) return;
+  /**
+   * 포인터 이벤트 (stage-13). 터치는 pointerdown이 일어난 칸에 암묵 캡처가 걸려서
+   * 다른 요일 칸의 이벤트가 죽는다 — 주간 그리드 하나가 캡처를 쥐고 좌표로 요일을 찾는다.
+   * 마우스·터치·펜이 같은 경로를 탄다.
+   */
+  const dayAt = (x: number, y: number): DateOnly | null => {
+    const el = document.elementFromPoint(x, y);
+    return ((el?.closest('.daycol') as HTMLElement | null)?.dataset.day as DateOnly) ?? null;
+  };
+
+  const capture = (e: React.PointerEvent) => {
+    dragPointer.current = e.pointerId;
+    gridRef.current?.setPointerCapture(e.pointerId);
+  };
+
+  const onGridPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('.evblock')) return; // 블록 핸들러가 처리
+    const day = dayAt(e.clientX, e.clientY);
+    if (!day) return;
+    e.preventDefault();
+    capture(e);
     const startMin = minFromY(e.clientY);
     setDrag({ kind: 'create', day, startMin, endMin: startMin + SNAP_MIN });
   };
 
-  const onBlockMouseDown = (item: DisplayItem, day: DateOnly, e: React.MouseEvent) => {
+  const onBlockPointerDown = (item: DisplayItem, day: DateOnly, e: React.PointerEvent) => {
     e.stopPropagation();
     if (!item.start || !item.end) return;
+    e.preventDefault();
+    capture(e);
     const isResize = (e.target as HTMLElement).classList.contains('resize');
     const sMin = minutesOfDay(item.start);
     const eMin = sMin + (item.end.getTime() - item.start.getTime()) / 60_000;
@@ -262,11 +298,14 @@ function Calendar() {
     else setDrag({ kind: 'move', item, day, startMin: sMin, durMin: eMin - sMin });
   };
 
-  const onMouseMove = (day: DateOnly, e: React.MouseEvent) => {
+  const onGridPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!drag) return;
     const min = minFromY(e.clientY);
-    if (drag.kind === 'create') setDrag({ ...drag, day: drag.day, endMin: Math.max(drag.startMin + SNAP_MIN, min) });
-    if (drag.kind === 'move') setDrag({ ...drag, day, startMin: Math.min(min, 24 * 60 - drag.durMin) });
+    if (drag.kind === 'create') setDrag({ ...drag, endMin: Math.max(drag.startMin + SNAP_MIN, min) });
+    if (drag.kind === 'move') {
+      const day = dayAt(e.clientX, e.clientY) ?? drag.day;
+      setDrag({ ...drag, day, startMin: Math.min(min, 24 * 60 - drag.durMin) });
+    }
     if (drag.kind === 'resize') setDrag({ ...drag, endMin: Math.max(drag.startMin + SNAP_MIN, min) });
   };
 
@@ -284,27 +323,44 @@ function Calendar() {
       d.kind === 'move'
         ? new Date(newStart.getTime() + d.durMin * 60_000)
         : atMin(d.day, d.endMin);
+    // 실패는 훅의 onError 토스트가 알린다 — 여기서 삼키지 않으면 unhandled rejection
     if (e.rrule && d.item.start) {
       // 반복 회차 이동 = override (이 일정만)
-      void upsertOverride.mutateAsync({
-        eventId: e.id,
-        originalStart: d.item.start,
-        newStart,
-        newEnd,
-        isCancelled: false,
-      });
+      void upsertOverride
+        .mutateAsync({
+          eventId: e.id,
+          originalStart: d.item.start,
+          newStart,
+          newEnd,
+          isCancelled: false,
+        })
+        .catch(() => {});
     } else {
-      void saveEvent.mutateAsync({
-        id: e.id,
-        draft: { ...toDraft(e), startsAt: newStart, endsAt: newEnd },
-      });
+      void saveEvent
+        .mutateAsync({
+          id: e.id,
+          draft: { ...toDraft(e), startsAt: newStart, endsAt: newEnd },
+        })
+        .catch(() => {});
     }
   }, [drag, saveEvent, upsertOverride]);
 
+  // 캡처를 놓는 건 여기 한 곳뿐 — 그리드에도 onPointerUp을 달면 같은 드래그가 두 번 커밋된다
   useEffect(() => {
-    const up = () => commitDrag();
-    window.addEventListener('mouseup', up);
-    return () => window.removeEventListener('mouseup', up);
+    const up = () => {
+      const id = dragPointer.current;
+      if (id !== null && gridRef.current?.hasPointerCapture(id)) {
+        gridRef.current.releasePointerCapture(id);
+      }
+      dragPointer.current = null;
+      commitDrag();
+    };
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => {
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
   }, [commitDrag]);
 
   const nowMin = minutesOfDay(new Date());
@@ -315,7 +371,7 @@ function Calendar() {
         <div className="topbar">
           <h1>
             {view === 'week'
-              ? `${formatKoreanDate(days[0])} 주`
+              ? `${formatKoreanDate(days[0])}${narrow ? '부터' : ' 주'}`
               : `${monthOf(anchor).year}년 ${monthOf(anchor).month}월`}
           </h1>
           <button className="btn" onClick={goPrev}>‹</button>
@@ -354,6 +410,11 @@ function Calendar() {
         <div className="notice">
           ⏰ 알람은 앱에서만 울립니다. 웹에서 바꾼 일정은 앱을 한 번 열어야 알람에 반영됩니다.
         </div>
+        {loadError && (
+          <div className="notice error">
+            일정을 불러오지 못했어요 — {loadError.message}. 연결을 확인하고 새로고침해 주세요.
+          </div>
+        )}
 
         {view === 'month' ? (
           <MonthView
@@ -367,7 +428,7 @@ function Calendar() {
         ) : (
         <>
         {/* 종일 행 */}
-        <div className="alldayrow">
+        <div className="alldayrow" style={cols}>
           <div />
           {days.map((d) => (
             <div key={d}>
@@ -391,7 +452,13 @@ function Calendar() {
         </div>
 
         {/* 주간 그리드 */}
-        <div className="week" ref={gridRef}>
+        <div
+          className="week"
+          ref={gridRef}
+          style={cols}
+          onPointerDown={onGridPointerDown}
+          onPointerMove={onGridPointerMove}
+        >
           <div className="timecol">
             <div className="dayhead" />
             {Array.from({ length: 24 }, (_, h) => (
@@ -399,12 +466,7 @@ function Calendar() {
             ))}
           </div>
           {days.map((d) => (
-            <div
-              key={d}
-              className="daycol"
-              onMouseDown={(e) => onGridMouseDown(d, e)}
-              onMouseMove={(e) => onMouseMove(d, e)}
-            >
+            <div key={d} className="daycol" data-day={d}>
               <div className={`dayhead${d === today ? ' today' : ''}`}>
                 {'월화수목금토일'[(fromDateOnly(d, TZ).getDay() + 6) % 7]}{' '}
                 <span className="num">{Number(d.slice(8))}</span>
@@ -436,7 +498,7 @@ function Calendar() {
                         borderLeftColor: color,
                         opacity: dragged ? 0.4 : 1,
                       }}
-                      onMouseDown={(e) => onBlockMouseDown(it, d, e)}
+                      onPointerDown={(e) => onBlockPointerDown(it, d, e)}
                       onDoubleClick={() => setPanel({ mode: 'edit', item: it })}
                     >
                       <div className="t">{it.event.title}</div>
@@ -590,51 +652,60 @@ function EditorPanel({
 
   const isRecurring = !!editing?.rrule;
 
+  // 실패했는데 패널이 닫히면 입력한 내용이 통째로 사라진다 — 실패하면 열어 둔다 (토스트가 알린다)
   const doSave = async (scope: 'one' | 'all') => {
     const startsAt = new Date(startStr);
     const endsAt = new Date(endStr);
-    if (panel.mode === 'edit' && editing) {
-      if (isRecurring && scope === 'one' && panel.item.start) {
-        await upsertOverride.mutateAsync({
-          eventId: editing.id,
-          originalStart: panel.item.start,
-          newStart: startsAt,
-          newEnd: endsAt,
-          isCancelled: false,
-        });
+    try {
+      if (panel.mode === 'edit' && editing) {
+        if (isRecurring && scope === 'one' && panel.item.start) {
+          await upsertOverride.mutateAsync({
+            eventId: editing.id,
+            originalStart: panel.item.start,
+            newStart: startsAt,
+            newEnd: endsAt,
+            isCancelled: false,
+          });
+        } else {
+          await saveEvent.mutateAsync({
+            id: editing.id,
+            draft: { ...toDraft(editing), title: title || editing.title, categoryId: categoryId || null, startsAt, endsAt },
+          });
+        }
       } else {
         await saveEvent.mutateAsync({
-          id: editing.id,
-          draft: { ...toDraft(editing), title: title || editing.title, categoryId: categoryId || null, startsAt, endsAt },
+          id: null,
+          draft: {
+            ...emptyDraft(),
+            title: title || '(제목 없음)',
+            categoryId: categoryId || null,
+            startsAt,
+            endsAt,
+          },
         });
       }
-    } else {
-      await saveEvent.mutateAsync({
-        id: null,
-        draft: {
-          ...emptyDraft(),
-          title: title || '(제목 없음)',
-          categoryId: categoryId || null,
-          startsAt,
-          endsAt,
-        },
-      });
+    } catch {
+      return;
     }
     onClose();
   };
 
   const doDelete = async (scope: 'one' | 'all') => {
     if (!editing) return;
-    if (isRecurring && scope === 'one' && panel.mode === 'edit' && panel.item.start) {
-      await upsertOverride.mutateAsync({
-        eventId: editing.id,
-        originalStart: panel.item.start,
-        newStart: null,
-        newEnd: null,
-        isCancelled: true,
-      });
-    } else {
-      await deleteEvent.mutateAsync(editing.id);
+    try {
+      if (isRecurring && scope === 'one' && panel.mode === 'edit' && panel.item.start) {
+        await upsertOverride.mutateAsync({
+          eventId: editing.id,
+          originalStart: panel.item.start,
+          newStart: null,
+          newEnd: null,
+          isCancelled: true,
+        });
+      } else {
+        await deleteEvent.mutateAsync(editing.id);
+      }
+    } catch {
+      return;
     }
     onClose();
   };

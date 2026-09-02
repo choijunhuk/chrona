@@ -7,6 +7,8 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 
 import { formatInTimeZone } from 'date-fns-tz';
 
+// 배럴('@chrona/domain')이 아니라 meet 모듈 직접 — 배럴은 recurrence(rrule)까지 끌고 온다.
+// 참여자 화면이 캘린더 번들을 내려받지 않게 하는 코드 분할의 전제다 (stage-13)
 import {
   bestSlots,
   heatmap,
@@ -15,9 +17,10 @@ import {
   timeSlots,
   type MeetPollInfo,
   type MeetResponse,
-} from '@chrona/domain';
+} from '@chrona/domain/meet';
 
 import {
+  NAME_TAKEN,
   useConfirmMeetSlot,
   useCreatePoll,
   useDeletePoll,
@@ -31,12 +34,8 @@ import {
 
 const TZ = 'Asia/Seoul';
 const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`);
-
-/** '#/meet/<uuid>' 해시에서 토큰을 뽑는다. 매직링크 복귀 해시(#access_token=…)와 섞이지 않게 엄격히 */
-export function meetTokenFromHash(hash: string): string | null {
-  const m = /^#\/meet\/([0-9a-f-]{36})$/i.exec(hash);
-  return m ? m[1] : null;
-}
+/** 0006 meet_responses_name_check와 같은 값 */
+const NAME_MAX = 40;
 
 export function meetShareUrl(token: string): string {
   return `${location.origin}/#/meet/${token}`;
@@ -77,6 +76,7 @@ function MeetPoll({
   const [hover, setHover] = useState<string | null>(null);
   const paint = useRef<boolean | null>(null);
   const loadedFor = useRef<string | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
   const submit = useSubmitMeetResponse(token);
   const confirm = useConfirmMeetSlot();
 
@@ -102,10 +102,15 @@ function MeetPoll({
     if (existing) setMine(new Set(existing.slots));
   }, [name, poll]);
 
+  // 그리드 밖에서 손/버튼을 떼도 칠하기가 끝나게
   useEffect(() => {
     const up = () => (paint.current = null);
-    window.addEventListener('mouseup', up);
-    return () => window.removeEventListener('mouseup', up);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => {
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
   }, []);
 
   const apply = (key: string, add: boolean) => {
@@ -119,21 +124,50 @@ function MeetPoll({
     });
   };
 
-  const onCellDown = (key: string) => {
+  /**
+   * 포인터 이벤트로 칠한다 (stage-13). 터치는 pointerdown 순간 그 칸에 암묵 캡처가 걸려
+   * 칸별 enter 핸들러가 죽는다 — 그리드 하나가 캡처를 가져가고 좌표로 칸을 찾는다.
+   * 덕분에 마우스·터치·펜이 같은 경로를 탄다.
+   */
+  const keyAt = (x: number, y: number): string | null => {
+    const el = document.elementFromPoint(x, y);
+    return (el?.closest('.mslot') as HTMLElement | null)?.dataset.key ?? null;
+  };
+
+  const onGridPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const key = keyAt(e.clientX, e.clientY);
+    if (!key) return;
+    setHover(key);
     if (locked) return;
+    e.preventDefault();
+    gridRef.current?.setPointerCapture(e.pointerId);
     paint.current = !mine.has(key);
     apply(key, paint.current);
   };
-  const onCellEnter = (key: string) => {
+
+  const onGridPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const key = keyAt(e.clientX, e.clientY);
     setHover(key);
-    if (locked || paint.current === null) return;
+    if (locked || paint.current === null || !key) return;
     apply(key, paint.current);
   };
 
-  const canSave = trimmed.length >= 1 && trimmed.length <= 20 && !submit.isPending;
+  const onGridPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    paint.current = null;
+    if (gridRef.current?.hasPointerCapture(e.pointerId)) {
+      gridRef.current.releasePointerCapture(e.pointerId);
+    }
+  };
+
+  const nameTaken = submit.error instanceof Error && submit.error.message === NAME_TAKEN;
+  const canSave = trimmed.length >= 1 && trimmed.length <= NAME_MAX && !submit.isPending;
   const save = async () => {
-    await submit.mutateAsync({ name: trimmed, slots: [...mine] });
-    setSaved(true);
+    try {
+      await submit.mutateAsync({ name: trimmed, slots: [...mine] });
+      setSaved(true);
+    } catch {
+      // 이름 충돌은 아래 인라인 문구, 나머지는 토스트가 알린다
+    }
   };
 
   const ranked = bestSlots(map, 3);
@@ -154,7 +188,7 @@ function MeetPoll({
         <div className="meetrow">
           <input
             placeholder="이름"
-            maxLength={20}
+            maxLength={NAME_MAX}
             value={name}
             onChange={(e) => {
               setName(e.target.value);
@@ -165,15 +199,25 @@ function MeetPoll({
             저장
           </button>
           {saved && <span className="hint saved">저장됨</span>}
-          {submit.error && <span className="hint danger">저장 실패 — 다시 시도해 주세요</span>}
+          {nameTaken ? (
+            <span className="hint danger">이미 사용 중인 이름이에요</span>
+          ) : (
+            submit.error && <span className="hint danger">저장 실패 — 다시 시도해 주세요</span>
+          )}
           <span className="hint">드래그해서 가능한 시간을 칠하세요 · 응답 {poll.responses.length}명</span>
         </div>
       )}
 
+      <div className="mgridwrap">
       <div
         className="mgrid"
+        ref={gridRef}
         style={{ gridTemplateColumns: `56px repeat(${poll.dates.length}, minmax(56px, 1fr))` }}
-        onMouseLeave={() => setHover(null)}
+        onPointerDown={onGridPointerDown}
+        onPointerMove={onGridPointerMove}
+        onPointerUp={onGridPointerUp}
+        onPointerCancel={onGridPointerUp}
+        onPointerLeave={() => setHover(null)}
       >
         <div className="mgh" />
         {poll.dates.map((d) => (
@@ -188,25 +232,22 @@ function MeetPoll({
               return (
                 <div
                   key={key}
+                  data-key={key}
                   className={`mslot${mine.has(key) ? ' mine' : ''}${locked ? ' locked' : ''}`}
                   style={{ background: heatColor(names.length, total) }}
                   title={names.length ? names.join(', ') : ''}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    onCellDown(key);
-                  }}
-                  onMouseEnter={() => onCellEnter(key)}
                 />
               );
             })}
           </Fragment>
         ))}
       </div>
+      </div>
 
       <div className="meetinfo hint">
         {hover
           ? `${slotLabel(hover)} · ${hoverNames.length}/${total}${hoverNames.length ? ` — ${hoverNames.join(', ')}` : ''}`
-          : '칸에 마우스를 올리면 가능한 사람이 보여요'}
+          : '칸을 누르거나 마우스를 올리면 가능한 사람이 보여요'}
       </div>
 
       {owned && (
@@ -223,12 +264,14 @@ function MeetPoll({
                   className="btn primary"
                   disabled={confirm.isPending}
                   onClick={() =>
-                    void confirm.mutateAsync({
-                      pollId: owned.id,
-                      title: poll.title,
-                      slotKey: s.key,
-                      slotMinutes: poll.slotMinutes,
-                    })
+                    void confirm
+                      .mutateAsync({
+                        pollId: owned.id,
+                        title: poll.title,
+                        slotKey: s.key,
+                        slotMinutes: poll.slotMinutes,
+                      })
+                      .catch(() => {}) /* 실패는 토스트로 — unhandled rejection 방지 */
                   }
                 >
                   이 시간으로 확정
@@ -281,7 +324,11 @@ export function MeetPanel({ onClose }: { onClose: () => void }) {
     title.trim().length > 0 && dates.length > 0 && timeEnd > timeStart && !create.isPending;
 
   const doCreate = async () => {
-    await create.mutateAsync({ title: title.trim(), dates, timeStart, timeEnd });
+    try {
+      await create.mutateAsync({ title: title.trim(), dates, timeStart, timeEnd });
+    } catch {
+      return; // 입력을 지우지 않는다 — 토스트가 실패를 알린다
+    }
     setTitle('');
     setDates([]);
   };
@@ -355,7 +402,7 @@ export function MeetPanel({ onClose }: { onClose: () => void }) {
             <button
               className="btn"
               style={{ color: 'var(--danger)' }}
-              onClick={() => void remove.mutateAsync(p.id)}
+              onClick={() => void remove.mutateAsync(p.id).catch(() => {})}
             >
               삭제
             </button>

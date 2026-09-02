@@ -260,3 +260,37 @@ app/(tabs)/             calendar + more(테마 스위치/디버그/로그아웃)
 - 웹 `#/meet/<token>` 해시 라우트는 로그인 게이트보다 앞 — 계정 없이 열리는 유일한 화면
 - 히트맵·최적 슬롯 집계는 `domain/meet.ts` 순수 함수 (앱 현황 화면·웹 그리드 공유)
 - 앱은 생성·공유·확정 중심, 그리드 페인팅 UI는 웹 전용 (마우스/터치 드래그가 웹에서 더 좋음)
+
+### Stage 13 — 알람 제어·안정화 (2026-09-02)
+- **알림에서 바로 제어**: 알람 알림에 액션(끄기/스누즈)을 달고, 알림 본체 PRESS는 전용
+  핸들러로 받아 알람 화면을 연다. 알람 화면은 BackHandler로 뒤로가기를 막는다 —
+  실수로 화면을 빠져나와 알람이 계속 우는 상태를 없앤다
+- **조용 모드**: `quietUntil`(기기 로컬, AsyncStorage — 기기 1대 전제라 서버 동기화 없음)을
+  순수 함수 `domain/applyAlarmFilters`가 예약 목록에 적용한다. 해제 시각(quiet anchor)을
+  재계산 앵커로 넣어 조용 모드가 끝나는 순간 스스로 되살아난다
+- **한 번만 건너뛰기**: 다음 1회를 지우는 skip-once 키(일정 id + 발화 예정 시각).
+  회차 단위라 반복 규칙을 건드리지 않는다
+- **planned 캐시**: 재계산이 만든 예약 목록을 캐시해 매번 전개를 다시 돌리지 않는다
+- **알림 세분화**: reminder마다 enabled/sound_key를 따로 두고, 사운드별 알림 채널을 만든다
+  (안드로이드 채널은 생성 후 사운드 변경이 불가 — 사운드 하나당 채널 하나가 유일한 길)
+- **복원은 서버 트랜잭션 하나** (`0006 restore_backup`, security invoker):
+  테이블별 upsert는 중간 실패 시 반쯤 복원된 상태를 남긴다. jsonb 페이로드를 FK 순서대로
+  upsert하되 행마다 `user_id = auth.uid()`를 강제해 페이로드의 user_id를 무시한다.
+  `search_path = ''`, public/anon revoke 후 authenticated에만 grant
+- **백업 사본을 앱 밖으로**: 자동 백업은 `Paths.document`(앱 내부)에 쓰여 DocumentPicker로
+  고를 수 없고 앱 삭제와 함께 사라진다. (a) `restoreFromAutoBackup()`이 내부 파일을 직접 읽고,
+  (b) SAF(`chooseBackupDirectory()`)로 사용자가 고른 폴더에 사본을 하나 더 남긴다.
+  폴더 URI가 저장돼 있을 때만 복사 — headless 자동 백업이 권한 창을 띄우는 일은 없다
+- **약속 이름 선점**: `meet_responses.client_key`(브라우저 localStorage의 uuid)로 먼저 쓴
+  사람만 그 이름의 응답을 고칠 수 있다. 충돌은 errcode `unique_violation` + 메시지
+  `name_taken`. 이름 40자·슬롯 키 32자·제목 80자 상한, meet_* updated_at 트리거 합류
+- **웹 터치**: 마우스 전용 핸들러를 포인터 이벤트로 교체. 터치는 pointerdown이 일어난 칸에
+  암묵 캡처가 걸려 칸별 enter 핸들러가 죽으므로, **그리드 하나가 캡처를 쥐고
+  `elementFromPoint`로 칸을 찾는다** (주간 격자·약속 히트맵 동일). 칸에 `touch-action: none`
+- **웹 코드 분할**: 라우팅을 `main.tsx`로 올리고 캘린더(`App`)와 참여자 화면(`Meet`)을
+  각각 `React.lazy`. 참여자 청크에 rrule이 딸려오지 않게 domain은 배럴 대신
+  모듈 직접 import(`@chrona/domain/meet`, `/time`). 참여자 552 kB → 494 kB
+- **웹 견고성**: `useEvents`의 종일·과제 가지를 날짜 범위로 묶고(전 종일 일정/전 과제를
+  매번 받던 문제), 전 뮤테이션에 onError 토스트, 저장 실패 시 편집 패널 유지,
+  조회 실패는 빈 달력 대신 인라인 안내
+- **CI**: `.github/workflows/ci.yml` — test → typecheck → lint → 웹 빌드 (`pnpm verify`와 동일)
