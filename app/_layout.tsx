@@ -10,8 +10,14 @@ import { handleAuthDeepLink, useSession } from '@/data/auth';
 import { autoBackupIfDue } from '@/data/backup';
 import { initNetListener } from '@/data/net';
 import { QueryProvider } from '@/data/query';
-import { serializeAlarmPayload } from '@/domain/alarm-payload';
-import { ensureChannels, getInitialAlarm, subscribeAlarmDelivered } from '@/native/alarm';
+import { serializeAlarmPayload, type AlarmPayload } from '@/domain/alarm-payload';
+import {
+  ensureChannels,
+  getInitialAlarm,
+  isAlarmRingScreenOpen,
+  setAlarmOpenHandler,
+  subscribeAlarmDelivered,
+} from '@/native/alarm';
 import { rescheduleAll } from '@/native/rescheduler';
 import { maybeWeeklyCheck } from '@/native/permissions';
 import { restoreTimer } from '@/native/timer';
@@ -82,12 +88,17 @@ function Root() {
       void autoBackupIfDue(); // 주1회 로컬 자동 백업 (stage-11) — 실패해도 무시
     })();
 
-    const unsubscribeAlarm = subscribeAlarmDelivered((notificationId, payload) => {
-      router.push({
-        pathname: '/alarm-ring',
-        params: { ...serializeAlarmPayload(payload), notificationId },
-      });
-    });
+    // 알림 → 화면 이동은 전부 여기 한 곳. alarm.ts는 라우터를 모른다 (headless 대응)
+    const openRing = (payload: AlarmPayload, notificationId: string) => {
+      const params = { ...serializeAlarmPayload(payload), notificationId };
+      // 이미 링 화면이면 replace — 새 알람이 이전 알람을 덮어쓴다 (master §3.9)
+      if (isAlarmRingScreenOpen()) router.replace({ pathname: '/alarm-ring', params });
+      else router.push({ pathname: '/alarm-ring', params });
+    };
+    const unsubscribeAlarm = subscribeAlarmDelivered((notificationId, payload) =>
+      openRing(payload, notificationId)
+    );
+    setAlarmOpenHandler(openRing); // 알림 본문 탭 (EventType.PRESS)
     const unsubscribeNet = initNetListener();
     // 백그라운드 → 포그라운드 복귀 시 재계산 (master §3.6 트리거 1)
     const appStateSub = AppState.addEventListener('change', (state) => {
@@ -100,6 +111,7 @@ function Root() {
 
     return () => {
       cancelled = true;
+      setAlarmOpenHandler(null);
       unsubscribeAlarm();
       unsubscribeNet();
       appStateSub.remove();

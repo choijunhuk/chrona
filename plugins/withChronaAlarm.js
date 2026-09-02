@@ -5,8 +5,9 @@
  * - 권한 8종 (전체화면 알람 + 정확 알람 + 부팅 복구 + 포그라운드 서비스)
  * - MainActivity: showWhenLocked / turnScreenOn / launchMode=singleTask
  *   → 이 둘이 없으면 잠금화면 위로 알람이 뜨지 않는다.
- * - assets/sounds/alarm_NN.mp3 → android/app/src/main/res/raw/ 복사 (파일 없으면 skip)
- *   네이밍 규칙: alarm_01.mp3 ~ alarm_04.mp3 (soundKey와 1:1 대응, 무음은 파일 없이 진동만)
+ * - assets/sounds/alarm_NN.(wav|mp3) → android/app/src/main/res/raw/ 복사 (파일 없으면 skip)
+ *   네이밍 규칙: alarm_01 ~ alarm_04 (soundKey와 1:1 대응, 무음은 파일 없이 진동만)
+ *   res/raw 리소스 이름 = 확장자를 뺀 파일명 → 알림 채널의 sound 값과 그대로 일치한다.
  *
  * 주의: expo config 로더가 로컬 .ts 플러그인을 해석하지 못하므로 이 파일만 JS로 둔다.
  */
@@ -59,7 +60,7 @@ const withAlarmSounds = (config) =>
         'raw'
       );
       if (fs.existsSync(soundsDir)) {
-        const files = fs.readdirSync(soundsDir).filter((f) => /^alarm_\d{2}\.mp3$/.test(f));
+        const files = fs.readdirSync(soundsDir).filter((f) => /^alarm_\d{2}\.(wav|mp3)$/.test(f));
         if (files.length > 0) {
           fs.mkdirSync(rawDir, { recursive: true });
           for (const f of files) {

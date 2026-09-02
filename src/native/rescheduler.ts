@@ -7,12 +7,15 @@
 import { formatTimeLabel, resolveTimezone, toDateOnly } from '@/domain/time';
 import {
   ALARM_LIMIT,
+  alarmKey,
+  applyAlarmFilters,
   computeAlarmTimes,
   expandOccurrences,
   expandStandaloneAlarms,
 } from '@/domain/schedule';
-import { getLocalSettings } from '@/data/local-settings';
+import { getLocalSettings, setLocalSettings } from '@/data/local-settings';
 import { readRescheduleSource, refreshRescheduleSource } from '@/data/reschedule-source';
+import { writePlannedCache } from '@/native/planned-cache';
 import { pushWidgetData } from '@/native/widget';
 import {
   cancelAllTriggers,
@@ -24,6 +27,9 @@ import {
   scheduleReminder,
   showOngoing,
 } from '@/native/alarm';
+
+/** 방해금지 해제 시각 앵커 — 자정 앵커와 별개 id라 서로 덮어쓰지 않는다 */
+export const QUIET_ANCHOR_ID = 'chrona-anchor-quiet';
 
 export type RescheduleResult = {
   scheduled: number;
@@ -58,15 +64,30 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
   const now = new Date();
   const until = new Date(now.getTime() + 60 * 86400_000); // 60일 창 (master §3.7)
   const tz = resolveTimezone(source.settings);
+  const local = await getLocalSettings();
 
   const occurrences = expandOccurrences(source.events, { from: now, to: until }, source.overrides, tz);
   const standalone = expandStandaloneAlarms(source.standaloneAlarms, now, until, tz);
-  const planned = computeAlarmTimes(occurrences, source.reminders, standalone, now, ALARM_LIMIT, {
+  const computed = computeAlarmTimes(occurrences, source.reminders, standalone, now, ALARM_LIMIT, {
     snoozeMinutes: source.settings?.snoozeMinutes ?? 5,
     maxSnoozeCount: source.settings?.maxSnoozeCount ?? 3,
     defaultSoundKey: source.settings?.defaultSoundKey ?? 'default',
     tz,
   });
+
+  // 방해금지(방학 모드) + "이번만 건너뛰기" 필터 (stage-13 §7)
+  const quietUntil = local.quietUntil ? new Date(local.quietUntil) : null;
+  const { planned, liveSkippedKeys } = applyAlarmFilters(computed, {
+    now,
+    quietUntil,
+    skippedKeys: local.skippedAlarmKeys,
+  });
+  if (
+    liveSkippedKeys.length !== local.skippedAlarmKeys.length ||
+    liveSkippedKeys.some((k) => !local.skippedAlarmKeys.includes(k))
+  ) {
+    await setLocalSettings({ skippedAlarmKeys: liveSkippedKeys });
+  }
 
   // ★ 전체 취소 후 재예약 (부분 갱신 금지)
   await cancelAllTriggers();
@@ -75,6 +96,11 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
     else await scheduleReminder(p.payload, p.fireAt);
   }
   await scheduleMidnightAnchor();
+  // 방해금지 해제 시각에도 앵커를 걸어둔다 — 앱을 열지 않아도 알람이 되살아나야 한다
+  if (quietUntil && quietUntil.getTime() > now.getTime()) {
+    await scheduleMidnightAnchor(quietUntil, QUIET_ANCHOR_ID);
+  }
+  await writePlannedCache(planned, alarmKey);
 
   // 브리핑 (stage-6 §2): 내용은 지금(예약 시점) 생성 — 발화 시 DB 조회 없음 (master §3.5)
   if (source.settings?.briefingEnabled ?? true) {
@@ -113,7 +139,7 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
   }
 
   // 아침 브리핑 (stage-11): 기기 로컬 설정. 저녁 브리핑과 같은 조용한 알림, 내용은 그날 기준
-  const local = await getLocalSettings();
+  // 브리핑은 조용한 알림이라 방해금지의 영향을 받지 않는다 (stage-13 §7)
   if (local.morningBriefingEnabled) {
     const [mh, mm] = local.morningBriefingTime.split(':').map(Number);
     const morningAt = new Date(now);

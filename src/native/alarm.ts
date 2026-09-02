@@ -43,6 +43,37 @@ const ONGOING_NOTIFICATION_ID = 'chrona-ongoing';
 const ANCHOR_KIND = 'midnight-anchor';
 const VIBRATION_PATTERN = [300, 500];
 
+// ─── 알람음 (마스터 §3.10: 4종 + 무음) ───────────────────
+
+/** 알람음 선택지 — 이벤트 편집기·설정 피커가 공유한다. key는 payload.soundKey */
+export const SOUND_OPTIONS: { key: string; label: string }[] = [
+  { key: 'default', label: '기본' },
+  { key: 'alarm_01', label: '클래식 비프' },
+  { key: 'alarm_02', label: '차임' },
+  { key: 'alarm_03', label: '디지털' },
+  { key: 'alarm_04', label: '벨' },
+  { key: 'none', label: '무음(진동)' },
+];
+
+export function soundLabel(key: string | undefined): string {
+  return SOUND_OPTIONS.find((o) => o.key === key)?.label ?? '기본';
+}
+
+/** soundKey → 번들 리소스. require는 정적이어야 하므로 맵으로 고정 */
+const SOUND_SOURCES: Record<string, number> = {
+  default: require('../../assets/sounds/alarm_default.wav'),
+  alarm_01: require('../../assets/sounds/alarm_01.wav'),
+  alarm_02: require('../../assets/sounds/alarm_02.wav'),
+  alarm_03: require('../../assets/sounds/alarm_03.wav'),
+  alarm_04: require('../../assets/sounds/alarm_04.wav'),
+};
+
+/** soundKey → 채널 id. 채널마다 sound가 고정이라 소리 종류만큼 채널이 필요하다 */
+function alarmChannelFor(soundKey: string | undefined): string {
+  const key = soundKey && (soundKey in SOUND_SOURCES || soundKey === 'none') ? soundKey : 'default';
+  return key === 'default' ? CHANNELS.alarm : `chrona.alarm.${key}`;
+}
+
 // ─── 채널 ───────────────────────────────────────────────
 
 /** 앱 부팅 시 1회. 채널은 생성 후 속성 변경 불가 — 처음부터 정확하게 (마스터 §3.3) */
@@ -74,6 +105,20 @@ export async function ensureChannels(): Promise<void> {
     name: '타이머',
     importance: AndroidImportance.LOW,
   });
+  // 알람음별 채널 — 채널 sound는 생성 후 변경 불가라 소리 종류마다 채널을 나눈다 (§3.10)
+  for (const opt of SOUND_OPTIONS) {
+    if (opt.key === 'default') continue;
+    await notifee.createChannel({
+      id: alarmChannelFor(opt.key),
+      name: `알람 (${opt.label})`,
+      importance: AndroidImportance.HIGH,
+      bypassDnd: true,
+      sound: opt.key === 'none' ? undefined : opt.key,
+      vibration: true,
+      vibrationPattern: VIBRATION_PATTERN,
+      visibility: AndroidVisibility.PUBLIC,
+    });
+  }
 }
 
 // ─── 예약 ───────────────────────────────────────────────
@@ -82,21 +127,28 @@ export async function ensureChannels(): Promise<void> {
  * 알람 모드(②): SET_ALARM_CLOCK + 전체화면 + 끌 때까지 소리.
  * SET_ALARM_CLOCK 이 Doze를 뚫는 유일한 경로 — 다른 타입으로 대체 금지 (Stage 0 §1-5).
  */
-export async function scheduleAlarm(payload: AlarmPayload, fireAt: Date): Promise<string> {
+export async function scheduleAlarm(
+  payload: AlarmPayload,
+  fireAt: Date,
+  opts?: { id?: string }
+): Promise<string> {
+  const silent = payload.soundKey === 'none';
   return notifee.createTriggerNotification(
     {
+      ...(opts?.id ? { id: opts.id } : {}),
       title: payload.title,
       body: payload.timeLabel,
       data: serializeAlarmPayload(payload),
       android: {
-        channelId: CHANNELS.alarm,
+        channelId: alarmChannelFor(payload.soundKey),
         category: AndroidCategory.ALARM,
         importance: AndroidImportance.HIGH,
         visibility: AndroidVisibility.PUBLIC,
         fullScreenAction: { id: 'alarm-ring', launchActivity: 'default' },
         pressAction: { id: 'alarm-ring', launchActivity: 'default' },
-        loopSound: true,
-        sound: 'default',
+        actions: alarmActions(payload),
+        loopSound: !silent,
+        ...(silent ? {} : { sound: soundResource(payload.soundKey) }),
         ongoing: true,
         autoCancel: false,
         asForegroundService: true,
@@ -113,6 +165,27 @@ export async function scheduleAlarm(payload: AlarmPayload, fireAt: Date): Promis
   );
 }
 
+/**
+ * 알림 액션 버튼 (stage-13 §1): 앱을 열지 않고 해제·스누즈.
+ * 스누즈 소진 시 스누즈 버튼을 아예 빼서 "눌러도 아무 일 없음"을 만들지 않는다.
+ */
+function alarmActions(payload: AlarmPayload, opts?: { snooze?: boolean }) {
+  const actions = [{ title: '해제', pressAction: { id: 'alarm-dismiss' } }];
+  // 조용한 리마인더에 스누즈를 주면 snoozeAlarm이 SET_ALARM_CLOCK 알람으로 승격시킨다 → 리마인더는 해제만
+  if ((opts?.snooze ?? true) && payload.currentSnoozeCount < payload.maxSnooze) {
+    actions.push({
+      title: `스누즈 ${payload.snoozeMinutes}분`,
+      pressAction: { id: 'alarm-snooze' },
+    });
+  }
+  return actions;
+}
+
+/** soundKey → res/raw 리소스 이름 (확장자 없음). 미등록 키는 기본음 */
+function soundResource(soundKey: string | undefined): string {
+  return soundKey && soundKey !== 'default' && soundKey in SOUND_SOURCES ? soundKey : 'default';
+}
+
 /** 리마인더(①): 한 번 띄우고 끝 */
 export async function scheduleReminder(payload: AlarmPayload, fireAt: Date): Promise<string> {
   return notifee.createTriggerNotification(
@@ -123,6 +196,7 @@ export async function scheduleReminder(payload: AlarmPayload, fireAt: Date): Pro
       android: {
         channelId: CHANNELS.reminder,
         pressAction: { id: 'default', launchActivity: 'default' },
+        actions: alarmActions(payload, { snooze: false }),
       },
     },
     {
@@ -171,16 +245,40 @@ export async function cancelAllTriggers(): Promise<void> {
     notifee.getDisplayedNotifications(),
   ]);
   const displayedIds = new Set(displayed.map((d) => d.id));
-  const toCancel = pendingIds.filter((id) => !displayedIds.has(id));
+  // 스누즈는 재계산 대상이 아니다 — 사용자가 방금 "5분 뒤"를 누른 약속이라 살려둔다 (stage-13 §4)
+  const toCancel = pendingIds.filter((id) => !displayedIds.has(id) && !isSnoozeId(id));
   if (toCancel.length > 0) {
     await notifee.cancelTriggerNotifications(toCancel);
   }
 }
 
+const SNOOZE_PREFIX = 'snooze:';
+
+function isSnoozeId(id: string): boolean {
+  return id.startsWith(SNOOZE_PREFIX);
+}
+
+/** 같은 occurrence의 스누즈는 1건만 — 새로 걸 때 이전 것을 덮어쓴다 */
+function snoozeIdFor(payload: AlarmPayload): string {
+  return `${SNOOZE_PREFIX}${payload.eventId}|${payload.occurrenceStart}`;
+}
+
+/** 예약된 스누즈만 전부 취소 ("모든 알람 지금 끄기" 전용) */
+export async function cancelSnoozes(): Promise<number> {
+  const ids = (await notifee.getTriggerNotificationIds()).filter(isSnoozeId);
+  if (ids.length > 0) await notifee.cancelTriggerNotifications(ids);
+  return ids.length;
+}
+
+/** 알람 채널 여부 — 알람음별로 채널이 나뉘어 있다 (chrona.alarm / chrona.alarm.*) */
+function isAlarmChannel(channelId: string | undefined): boolean {
+  return !!channelId && channelId.startsWith(CHANNELS.alarm);
+}
+
 /** 알람(②)이 지금 울리는 중인지 — 재계산 지연 판단용 */
 export async function isAlarmRinging(): Promise<boolean> {
   const displayed = await notifee.getDisplayedNotifications();
-  return displayed.some((n) => n.notification.android?.channelId === CHANNELS.alarm);
+  return displayed.some((n) => isAlarmChannel(n.notification.android?.channelId));
 }
 
 export type ScheduledAlarm = {
@@ -208,6 +306,15 @@ export async function dismissAlarm(notificationId: string): Promise<void> {
   await notifee.stopForegroundService();
   if (notificationId) {
     await notifee.cancelNotification(notificationId);
+    return;
+  }
+  // id 유실(파라미터 누락·헤드리스 복귀) — 표시 중인 알람 알림을 전부 걷어낸다.
+  // 여기서 아무것도 안 하면 소리는 멎었는데 알림만 남아 "안 꺼진 알람"으로 보인다.
+  const displayed = await notifee.getDisplayedNotifications();
+  for (const n of displayed) {
+    if (n.id && isAlarmChannel(n.notification.android?.channelId)) {
+      await notifee.cancelNotification(n.id);
+    }
   }
 }
 
@@ -232,7 +339,9 @@ export async function snoozeAlarm(
     currentSnoozeCount: payload.currentSnoozeCount + 1,
   };
   const fireAt = new Date(Date.now() + payload.snoozeMinutes * 60_000);
-  await scheduleAlarm(next, fireAt);
+  const id = snoozeIdFor(payload);
+  await notifee.cancelTriggerNotification(id); // 같은 occurrence의 이전 스누즈 정리
+  await scheduleAlarm(next, fireAt, { id });
   return 'scheduled';
 }
 
@@ -341,11 +450,11 @@ export async function scheduleBriefing(
 // ─── 자정 앵커 (마스터 §3.6) ────────────────────────────
 
 /** 다음 자정(로컬)에 앵커 예약. fireAt 을 넘기면 그 시각으로 (디버그용) */
-export async function scheduleMidnightAnchor(fireAt?: Date): Promise<string> {
+export async function scheduleMidnightAnchor(fireAt?: Date, id?: string): Promise<string> {
   const at = fireAt ?? nextMidnight();
   return notifee.createTriggerNotification(
     {
-      id: 'chrona-midnight-anchor',
+      id: id ?? 'chrona-midnight-anchor',
       title: 'Chrona',
       body: '일정 알람 갱신 중…',
       data: { chronaKind: ANCHOR_KIND },
@@ -398,7 +507,7 @@ async function handleAnchorFired(notificationId: string | undefined): Promise<vo
 async function overrideOlderAlarms(newId: string | undefined): Promise<void> {
   const displayed = await notifee.getDisplayedNotifications();
   const olderAlarms = displayed.filter(
-    (n) => n.notification.android?.channelId === CHANNELS.alarm && n.id !== newId
+    (n) => isAlarmChannel(n.notification.android?.channelId) && n.id !== newId
   );
   if (olderAlarms.length === 0) return;
   for (const n of olderAlarms) {
@@ -420,6 +529,23 @@ async function handleEvent({ type, detail }: Event): Promise<void> {
       if (actionId === 'timer-stop') await timerModule.finishTimer(false);
       return;
     }
+    // 알람 액션 (stage-13 §1) — 앱이 죽어있는 headless 발화에서도 그대로 동작해야 한다
+    if (actionId === 'alarm-dismiss') {
+      await dismissAlarm(notification?.id ?? '');
+      return;
+    }
+    if (actionId === 'alarm-snooze') {
+      await snoozeAlarm(parseAlarmPayload(notification?.data), notification?.id ?? '');
+      return;
+    }
+  }
+
+  // 알림 본문 탭 → 울리는 중이면 /alarm-ring 으로 (포그라운드 전용. cold start는 getInitialAlarm)
+  if (type === EventType.PRESS && isAlarmChannel(notification?.android?.channelId)) {
+    if (alarmOpenHandler && notification?.id) {
+      alarmOpenHandler(parseAlarmPayload(notification.data), notification.id);
+    }
+    return;
   }
 
   if (type === EventType.DELIVERED) {
@@ -434,11 +560,34 @@ async function handleEvent({ type, detail }: Event): Promise<void> {
       await handleAnchorFired(notification?.id);
       return;
     }
-    if (notification?.android?.channelId === CHANNELS.alarm) {
+    if (isAlarmChannel(notification?.android?.channelId)) {
       await overrideOlderAlarms(notification?.id);
       notifyAlarmDelivered(notification?.id, notification?.data);
     }
   }
+}
+
+type AlarmOpenHandler = (payload: AlarmPayload, notificationId: string) => void;
+let alarmOpenHandler: AlarmOpenHandler | null = null;
+
+/**
+ * 알람 알림 탭 → /alarm-ring 이동 콜백 (app/_layout.tsx가 등록).
+ * alarm.ts는 expo-router를 import하지 않는다 — headless 컨텍스트에서 라우터가 없기 때문.
+ */
+export function setAlarmOpenHandler(fn: AlarmOpenHandler | null): void {
+  alarmOpenHandler = fn;
+}
+
+// /alarm-ring 이 떠 있는지 — 라우터를 모르는 곳(알림 이벤트)에서 중복 push를 막는다.
+// usePathname 대신 모듈 플래그를 쓰는 이유: 알림 이벤트는 렌더 밖에서 온다.
+let ringScreenOpen = false;
+
+export function setAlarmRingScreenOpen(open: boolean): void {
+  ringScreenOpen = open;
+}
+
+export function isAlarmRingScreenOpen(): boolean {
+  return ringScreenOpen;
 }
 
 type AlarmDeliveredListener = (notificationId: string, payload: AlarmPayload) => void;
@@ -466,8 +615,10 @@ export function registerAlarmEngine(): void {
   // 포그라운드 서비스 runner: 알림이 살아있는 동안만 생존.
   // resolve하지 않는 Promise — stopForegroundService()로만 종료된다 (Stage 0 §1-7).
   // 서비스 시작 시 자체 사운드 재생 — One UI가 채널 사운드를 삼키는 간헐 무음 보강.
-  notifee.registerForegroundService(() => {
-    void startAlarmSound();
+  notifee.registerForegroundService((notification) => {
+    void startAlarmSound(
+      typeof notification.data?.soundKey === 'string' ? notification.data.soundKey : 'default'
+    );
     return new Promise<void>(() => {});
   });
 
@@ -488,7 +639,7 @@ export async function getInitialAlarm(): Promise<{
   const initial = await notifee.getInitialNotification();
   if (!initial) return null;
   const { notification } = initial;
-  if (notification.android?.channelId !== CHANNELS.alarm) return null;
+  if (!isAlarmChannel(notification.android?.channelId)) return null;
   return {
     notificationId: notification.id ?? '',
     payload: parseAlarmPayload(notification.data),
@@ -560,14 +711,15 @@ let volumeRamp: ReturnType<typeof setInterval> | null = null;
 const RAMP_START = 0.15;
 const RAMP_SECONDS = 30;
 
-export async function startAlarmSound(): Promise<void> {
+export async function startAlarmSound(soundKey = 'default'): Promise<void> {
   try {
     if (alarmPlayer) return;
+    if (soundKey === 'none') return; // 무음(진동만) — 채널 vibrationPattern이 담당
     const { getLocalSettings } = await import('@/data/local-settings');
     const gradual = (await getLocalSettings()).gradualVolume;
     await setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true });
 
-    alarmPlayer = createAudioPlayer(require('../../assets/sounds/alarm_default.wav'));
+    alarmPlayer = createAudioPlayer(SOUND_SOURCES[soundKey] ?? SOUND_SOURCES.default);
     alarmPlayer.loop = true;
     alarmPlayer.volume = gradual ? RAMP_START : 1;
     alarmPlayer.play();

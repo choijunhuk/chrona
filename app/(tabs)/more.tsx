@@ -1,13 +1,29 @@
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, ToastAndroid, View } from 'react-native';
+import {
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  ToastAndroid,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Constants from 'expo-constants';
 
 import { signOut } from '@/data/auth';
-import { exportBackup, exportIcs, importBackup, importIcs } from '@/data/backup';
+import {
+  chooseBackupDirectory,
+  exportBackup,
+  exportIcs,
+  importBackup,
+  importIcs,
+  restoreFromAutoBackup,
+} from '@/data/backup';
 import { useSettings, useUpdateSettings } from '@/data/hooks/settings';
 import {
   getLocalSettings,
@@ -15,16 +31,40 @@ import {
   setLocalSettings,
   type LocalSettings,
 } from '@/data/local-settings';
-import { rescheduleDebounced } from '@/native/rescheduler';
+import {
+  cancelSnoozes,
+  dismissAlarm,
+  soundLabel,
+  SOUND_OPTIONS,
+} from '@/native/alarm';
+import { rescheduleAll, rescheduleDebounced } from '@/native/rescheduler';
 import { AppText } from '@/ui/components/text';
 import { haptics, hapticsEnabled, setHapticsEnabled } from '@/ui/components/haptics';
 import { useTheme } from '@/ui/theme';
 import { radius, spacing, type ThemeColors } from '@/ui/tokens';
 
+type Choice = { label: string; value: string | number };
+type Chooser = { title: string; options: Choice[]; onPick: (value: string | number) => void };
+
+/** '9/5 (수)' — 방해금지 종료 시각 표기용 */
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+function formatQuietUntil(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()} (${WEEKDAYS[d.getDay()]})`;
+}
+
+function endOfDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(23, 59, 0, 0);
+  return x;
+}
+
 // Stage 2: 테마/디버그/로그아웃만. 통계·브리핑·권한·백업은 해당 스테이지에서 (master §8)
 export default function More() {
   const [pickingBriefing, setPickingBriefing] = useState(false);
   const [pickingMorning, setPickingMorning] = useState(false);
+  const [pickingQuietDate, setPickingQuietDate] = useState(false);
+  const [chooser, setChooser] = useState<Chooser | null>(null);
   const [hapticsOn, setHapticsOn] = useState(hapticsEnabled());
   const [localS, setLocalS] = useState<LocalSettings>(localSettingsCache());
   useEffect(() => {
@@ -54,6 +94,86 @@ export default function More() {
     setMode(next);
     haptics.selection();
     updateSettings.mutate({ theme: next });
+  };
+
+  // ── 알람 전역 제어 (stage-13 §6) ────────────────────────
+  const quietActive =
+    !!localS.quietUntil && new Date(localS.quietUntil).getTime() > new Date().getTime();
+
+  const toggleQuiet = (on: boolean) => {
+    if (!on) {
+      patchLocal({ quietUntil: null }, true);
+      return;
+    }
+    haptics.selection();
+    setChooser({
+      title: '방해금지 (방학 모드)',
+      options: [
+        { label: '1시간', value: 1 },
+        { label: '오늘 하루', value: 0 },
+        { label: '3일', value: 72 },
+        { label: '7일', value: 168 },
+        { label: '날짜 직접 고르기', value: -1 },
+      ],
+      onPick: (v) => {
+        const hours = Number(v);
+        if (hours === -1) {
+          setPickingQuietDate(true);
+          return;
+        }
+        const until =
+          hours === 0 ? endOfDay(new Date()) : new Date(Date.now() + hours * 3600_000);
+        patchLocal({ quietUntil: until.toISOString() }, true);
+      },
+    });
+  };
+
+  const chooseTimeout = () =>
+    setChooser({
+      title: '알람 자동 종료',
+      options: [5, 10, 15, 30].map((m) => ({ label: `${m}분`, value: m })),
+      onPick: (v) => patchLocal({ alarmTimeoutMinutes: Number(v) }),
+    });
+
+  const chooseSnoozeMinutes = () =>
+    setChooser({
+      title: '스누즈 간격',
+      options: [3, 5, 10, 15].map((m) => ({ label: `${m}분`, value: m })),
+      onPick: (v) => updateSettings.mutate({ snoozeMinutes: Number(v) }),
+    });
+
+  const chooseMaxSnooze = () =>
+    setChooser({
+      title: '최대 스누즈 횟수',
+      options: [1, 2, 3, 5].map((n) => ({ label: `${n}회`, value: n })),
+      onPick: (v) => updateSettings.mutate({ maxSnoozeCount: Number(v) }),
+    });
+
+  const chooseSound = () =>
+    setChooser({
+      title: '기본 알람음',
+      options: SOUND_OPTIONS.map((o) => ({ label: o.label, value: o.key })),
+      onPick: (v) => updateSettings.mutate({ defaultSoundKey: String(v) }),
+    });
+
+  /** 울리는 것 정지 + 예약된 스누즈 제거 + 재계산. 일회성 — 설정을 끄는 게 아니다 */
+  const stopEverything = () => {
+    haptics.selection();
+    Alert.alert('모든 알람 지금 끄기', '울리는 알람을 끄고 예약된 스누즈를 모두 취소합니다.', [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '끄기',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            await dismissAlarm(''); // id 없이 → 표시 중인 알람 알림 전부 정리
+            const n = await cancelSnoozes();
+            await rescheduleAll();
+            ToastAndroid.show(`알람 해제됨 (스누즈 ${n}건 취소)`, ToastAndroid.SHORT);
+          })().catch((e) => ToastAndroid.show(String(e), ToastAndroid.LONG));
+        },
+      },
+    ]);
   };
 
   return (
@@ -156,6 +276,49 @@ export default function More() {
         <Pressable
           style={styles.row}
           onPress={() =>
+            Alert.alert(
+              '자동 백업에서 복원',
+              '주 1회 자동 저장된 최신 백업으로 덮어씁니다. 계속할까요?',
+              [
+                { text: '취소', style: 'cancel' },
+                {
+                  text: '복원',
+                  style: 'destructive',
+                  onPress: () =>
+                    void restoreFromAutoBackup()
+                      .then((r) =>
+                        ToastAndroid.show(
+                          `${r.restored}건 복원됨 (${r.exportedAt.slice(0, 10)} 백업)`,
+                          ToastAndroid.LONG
+                        )
+                      )
+                      .catch((e) => ToastAndroid.show(String(e), ToastAndroid.LONG)),
+                },
+              ]
+            )
+          }
+        >
+          <AppText>자동 백업에서 복원</AppText>
+          <AppText color="textDim">›</AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable
+          style={styles.row}
+          onPress={() =>
+            void chooseBackupDirectory()
+              .then((uri) =>
+                ToastAndroid.show(uri ? '자동 백업 폴더 설정됨 (앱 삭제해도 유지)' : '취소됨', ToastAndroid.SHORT)
+              )
+              .catch((e) => ToastAndroid.show(String(e), ToastAndroid.LONG))
+          }
+        >
+          <AppText>자동 백업 폴더 선택</AppText>
+          <AppText color="textDim">›</AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable
+          style={styles.row}
+          onPress={() =>
             void exportIcs().catch((e) => ToastAndroid.show(String(e), ToastAndroid.LONG))
           }
         >
@@ -191,7 +354,62 @@ export default function More() {
       <AppText variant="micro" color="textDim" style={styles.sectionLabel}>
         알람
       </AppText>
+      {quietActive && (
+        <View style={styles.quietBanner}>
+          <AppText variant="caption" color="accent">
+            방해금지 중 — {formatQuietUntil(localS.quietUntil!)} 까지 알람이 울리지 않아요
+          </AppText>
+        </View>
+      )}
       <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.rowLabel}>
+            <AppText>방해금지 (방학 모드)</AppText>
+            {quietActive && (
+              <AppText variant="caption" color="textDim">
+                ~{formatQuietUntil(localS.quietUntil!)} 까지
+              </AppText>
+            )}
+          </View>
+          <Switch
+            value={quietActive}
+            onValueChange={toggleQuiet}
+            trackColor={{ true: colors.accent, false: colors.border }}
+            thumbColor={colors.white}
+          />
+        </View>
+        <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={stopEverything}>
+          <AppText color="danger">모든 알람 지금 끄기</AppText>
+          <AppText color="textDim">›</AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={chooseSound}>
+          <AppText>기본 알람음</AppText>
+          <AppText color="accent">{soundLabel(settings?.defaultSoundKey)}</AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={chooseSnoozeMinutes}>
+          <AppText>스누즈 간격</AppText>
+          <AppText color="accent" nums>
+            {settings?.snoozeMinutes ?? 5}분
+          </AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={chooseMaxSnooze}>
+          <AppText>최대 스누즈 횟수</AppText>
+          <AppText color="accent" nums>
+            {settings?.maxSnoozeCount ?? 3}회
+          </AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={chooseTimeout}>
+          <AppText>알람 자동 종료</AppText>
+          <AppText color="accent" nums>
+            {localS.alarmTimeoutMinutes}분
+          </AppText>
+        </Pressable>
+        <View style={styles.divider} />
         <Pressable style={styles.row} onPress={() => router.push('/onboarding/permissions')}>
           <AppText>알람 권한 체크리스트</AppText>
           <AppText color="textDim">›</AppText>
@@ -299,6 +517,20 @@ export default function More() {
         />
       )}
 
+      {pickingQuietDate && (
+        <DateTimePicker
+          value={new Date(new Date().getTime() + 86400_000)}
+          mode="date"
+          minimumDate={new Date()}
+          onChange={(e: DateTimePickerEvent, d?: Date) => {
+            setPickingQuietDate(false);
+            if (e.type === 'set' && d) {
+              patchLocal({ quietUntil: endOfDay(d).toISOString() }, true);
+            }
+          }}
+        />
+      )}
+
       {pickingBriefing && (
         <DateTimePicker
           value={(() => {
@@ -334,6 +566,29 @@ export default function More() {
       <AppText variant="micro" color="textDim" style={styles.version} nums>
         Chrona {Constants.expoConfig?.version ?? '?'}
       </AppText>
+
+      {/* 선택지 3개를 넘는 설정이 많아 Alert 대신 공용 시트를 쓴다 (안드로이드 Alert는 버튼 3개 한계) */}
+      <Modal visible={!!chooser} transparent animationType="fade" onRequestClose={() => setChooser(null)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setChooser(null)}>
+          <View style={styles.modalCard}>
+            <AppText variant="title">{chooser?.title}</AppText>
+            {chooser?.options.map((o) => (
+              <Pressable
+                key={String(o.value)}
+                style={styles.choice}
+                onPress={() => {
+                  const pick = chooser.onPick;
+                  setChooser(null);
+                  haptics.selection();
+                  pick(o.value);
+                }}
+              >
+                <AppText>{o.label}</AppText>
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }
@@ -361,4 +616,27 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: spacing.lg - 2,
       minHeight: 52,
     },
+    rowLabel: { gap: 2 },
+    quietBanner: {
+      backgroundColor: colors.surface,
+      borderLeftWidth: 3,
+      borderLeftColor: colors.accent,
+      borderRadius: radius.sm,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+      marginBottom: spacing.sm,
+    },
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: `${colors.black}88`,
+      justifyContent: 'center',
+      padding: spacing.xl,
+    },
+    modalCard: {
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      padding: spacing.xl,
+      gap: spacing.xs,
+    },
+    choice: { paddingVertical: spacing.md, minHeight: 44, justifyContent: 'center' },
   });
