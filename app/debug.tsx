@@ -42,6 +42,7 @@ function testPayload(fireAt: Date, title: string): AlarmPayload {
     maxSnooze: 3,
     currentSnoozeCount: 0,
     soundKey: 'default',
+    challenge: 'none',
   };
 }
 

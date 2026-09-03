@@ -23,6 +23,7 @@ import { localSettingsCache } from '@/data/local-settings';
 import { parseAlarmPayload } from '@/domain/alarm-payload';
 import { dismissAlarm, postMissedAlarm, setAlarmRingScreenOpen, snoozeAlarm } from '@/native/alarm';
 import { haptics } from '@/ui/components/haptics';
+import { AlarmChallenge } from '@/ui/screens/alarm-challenge';
 import { colors } from '@/ui/tokens';
 
 const TRACK_WIDTH = 300;
@@ -41,6 +42,11 @@ export default function AlarmRing() {
   const doneRef = useRef(false);
   const snoozeExhausted = payload.currentSnoozeCount >= payload.maxSnooze;
 
+  // 해제 게이트 (stage-15): 챌린지가 걸린 알람은 슬라이드·길게 누르기·뒤로가기 모두
+  // 곧바로 해제하지 않고 오버레이를 연다. 스누즈는 게이트 없이 그대로 쓸 수 있다.
+  const challengeType = payload.challenge === 'math' || payload.challenge === 'shake' ? payload.challenge : null;
+  const [challengeOpen, setChallengeOpen] = useState(false);
+
   const finish = useCallback(() => {
     if (doneRef.current) return;
     doneRef.current = true;
@@ -56,6 +62,17 @@ export default function AlarmRing() {
     await dismissAlarm(notificationId);
     finish();
   }, [notificationId, finish]);
+
+  /** 해제 시도 진입점 — 챌린지가 있으면 오버레이만 연다 */
+  const requestDismiss = useCallback(() => {
+    if (doneRef.current) return;
+    haptics.selection();
+    if (challengeType) {
+      setChallengeOpen(true);
+      return;
+    }
+    void onDismiss();
+  }, [challengeType, onDismiss]);
 
   const onSnooze = useCallback(async () => {
     if (doneRef.current || snoozeExhausted) return;
@@ -85,16 +102,22 @@ export default function AlarmRing() {
     return () => setAlarmRingScreenOpen(false);
   }, []);
 
-  // 뒤로가기 = 해제. 기본 동작(그냥 화면 이탈)이면 알람이 계속 울린다
+  // 뒤로가기 = 해제(챌린지가 있으면 오버레이 열기). 기본 동작(그냥 화면 이탈)이면 알람이 계속 울린다.
+  // 오버레이 안에서의 뒤로가기는 오버레이만 닫는다 — 알람은 계속 울린다
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      void onDismiss();
+      if (challengeOpen) {
+        setChallengeOpen(false);
+        return true;
+      }
+      requestDismiss();
       return true;
     });
     return () => sub.remove();
-  }, [onDismiss]);
+  }, [challengeOpen, requestDismiss]);
 
   // 밀어서 해제
+  const hasChallenge = challengeType !== null;
   const translateX = useSharedValue(0);
   const pan = Gesture.Pan()
     .onUpdate((e) => {
@@ -102,8 +125,9 @@ export default function AlarmRing() {
     })
     .onEnd(() => {
       if (translateX.value >= DISMISS_THRESHOLD) {
-        translateX.value = withSpring(SLIDE_MAX);
-        runOnJS(onDismiss)();
+        // 챌린지가 있으면 썸을 되돌린다 — 실패하고 돌아왔을 때 다시 밀 수 있어야 한다
+        translateX.value = withSpring(hasChallenge ? 0 : SLIDE_MAX);
+        runOnJS(requestDismiss)();
       } else {
         translateX.value = withSpring(0);
       }
@@ -140,7 +164,13 @@ export default function AlarmRing() {
         </Pressable>
 
         <View style={styles.track}>
-          <Text style={styles.trackLabel}>밀어서 해제</Text>
+          <Text style={styles.trackLabel}>
+            {challengeType === 'math'
+              ? '밀어서 문제 풀기'
+              : challengeType === 'shake'
+                ? '밀어서 흔들기'
+                : '밀어서 해제'}
+          </Text>
           <GestureDetector gesture={pan}>
             <Animated.View style={[styles.thumb, thumbStyle]}>
               <Text style={styles.thumbText}>{'>>'}</Text>
@@ -150,17 +180,24 @@ export default function AlarmRing() {
 
         {/* 슬라이드가 안 먹을 때의 대비책. 1.5초 길게 눌러야 동작 — 짧은 오탭으로는 안 꺼진다 */}
         <Pressable
-          onLongPress={() => {
-            haptics.selection();
-            void onDismiss();
-          }}
+          onLongPress={requestDismiss}
           delayLongPress={LONG_PRESS_MS}
           disabled={done}
           style={({ pressed }) => [styles.fallback, pressed && styles.fallbackPressed]}
         >
-          <Text style={styles.fallbackText}>해제 (1.5초 길게 누르기)</Text>
+          <Text style={styles.fallbackText}>
+            {challengeType ? '해제하기 (1.5초 길게 누르기)' : '해제 (1.5초 길게 누르기)'}
+          </Text>
         </Pressable>
       </View>
+
+      {challengeType && challengeOpen && (
+        <AlarmChallenge
+          type={challengeType}
+          onSuccess={onDismiss}
+          onCancel={() => setChallengeOpen(false)}
+        />
+      )}
     </View>
   );
 }

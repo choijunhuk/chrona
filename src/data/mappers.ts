@@ -9,6 +9,7 @@
 import type {
   AppSettings,
   Category,
+  ChallengeType,
   ChronaEvent,
   EventKind,
   EventOverride,
@@ -126,6 +127,7 @@ export function toDomainReminder(row: ReminderRow): Reminder {
 export type EventOverrideRow = Tables['event_overrides']['Row'];
 export type StandaloneAlarmRow = Tables['standalone_alarms']['Row'];
 export type StandaloneAlarmInsert = Tables['standalone_alarms']['Insert'];
+export type StandaloneAlarmUpdate = Tables['standalone_alarms']['Update'];
 
 export function toDomainOverride(row: EventOverrideRow): EventOverride {
   return {
@@ -147,6 +149,8 @@ export function toDomainStandaloneAlarm(row: StandaloneAlarmRow): StandaloneAlar
     enabled: row.enabled,
     soundKey: row.sound_key,
     vibrate: row.vibrate,
+    // 0007 이전 백업을 복원한 행에는 challenge가 없을 수 있다 → 'none'으로 (기존 동작 유지)
+    challenge: (row.challenge ?? 'none') as ChallengeType,
   };
 }
 
@@ -164,8 +168,24 @@ export function toStandaloneAlarmInsert(
     enabled: draft.enabled,
     sound_key: draft.soundKey,
     vibrate: draft.vibrate,
+    challenge: draft.challenge,
     updated_at: new Date().toISOString(),
   };
+}
+
+/** 부분 수정 (stage-15 편집 UI). 전달한 필드만 + updated_at 항상 (master §7.3) */
+export function toStandaloneAlarmUpdate(
+  patch: Partial<StandaloneAlarmDraft>
+): StandaloneAlarmUpdate {
+  const u: StandaloneAlarmUpdate = { updated_at: new Date().toISOString() };
+  if (patch.time !== undefined) u.time = patch.time;
+  if (patch.weekdays !== undefined) u.weekdays = patch.weekdays;
+  if (patch.label !== undefined) u.label = patch.label;
+  if (patch.enabled !== undefined) u.enabled = patch.enabled;
+  if (patch.soundKey !== undefined) u.sound_key = patch.soundKey;
+  if (patch.vibrate !== undefined) u.vibrate = patch.vibrate;
+  if (patch.challenge !== undefined) u.challenge = patch.challenge;
+  return u;
 }
 
 // ── reminders (쓰기) ────────────────────────────────────

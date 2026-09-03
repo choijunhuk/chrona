@@ -44,6 +44,25 @@ const DAY_TO_WEEKDAY = [1, 2, 3, 4, 5]; // col → JS weekday
 
 const timeToMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
 
+/**
+ * 시간표 블록의 "이번 주" 회차 (stage-15).
+ * 시간표 이벤트는 매주 반복이라 편집기에 base starts_at을 넘기면 "이 일정만"이 학기 첫 주를
+ * 가리킨다. 오늘이 속한 주(월 시작)에서 그 열의 요일 날짜 + 원래 시각으로 맞춘다.
+ */
+function occurrenceInCurrentWeek(startsAt: Date, weekday: number): Date {
+  const now = new Date();
+  const mondayOffset = (now.getDay() + 6) % 7; // 월=0 … 일=6
+  const occ = new Date(now);
+  occ.setDate(now.getDate() - mondayOffset + (weekday - 1));
+  occ.setHours(
+    startsAt.getHours(),
+    startsAt.getMinutes(),
+    startsAt.getSeconds(),
+    startsAt.getMilliseconds()
+  );
+  return occ;
+}
+
 type Block = {
   event: ChronaEvent;
   col: number;
@@ -331,7 +350,13 @@ export function TimetableScreen() {
                     router.push({
                       pathname: '/event/[id]',
                       params: b.event.startsAt
-                        ? { id: b.event.id, occ: b.event.startsAt.toISOString() }
+                        ? {
+                            id: b.event.id,
+                            occ: occurrenceInCurrentWeek(
+                              b.event.startsAt,
+                              DAY_TO_WEEKDAY[b.col]
+                            ).toISOString(),
+                          }
                         : { id: b.event.id },
                     })
                   }

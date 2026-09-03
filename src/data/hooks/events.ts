@@ -145,6 +145,25 @@ export function useUpdateEvent() {
   });
 }
 
+/** 삭제 되돌리기 (stage-15 스낵바). soft delete라 deleted_at만 되돌린다 */
+export function useRestoreEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      assertOnline();
+      const { error } = await supabase
+        .from('events')
+        .update({ deleted_at: null, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.allEvents() });
+      rescheduleDebounced();
+    },
+  });
+}
+
 /** ★ soft delete (stage-1 §1-8). 물리 삭제 금지 (master §7.3) */
 export function useDeleteEvent() {
   const qc = useQueryClient();

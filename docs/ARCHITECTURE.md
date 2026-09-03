@@ -294,3 +294,28 @@ app/(tabs)/             calendar + more(테마 스위치/디버그/로그아웃)
   매번 받던 문제), 전 뮤테이션에 onError 토스트, 저장 실패 시 편집 패널 유지,
   조회 실패는 빈 달력 대신 인라인 안내
 - **CI**: `.github/workflows/ci.yml` — test → typecheck → lint → 웹 빌드 (`pnpm verify`와 동일)
+
+### Stage 15 — 해제 게이트·기상 프리셋·되돌리기 (2026-09-03)
+- **해제 게이트(`standalone_alarms.challenge`, 0007)**: `'none' | 'math' | 'shake'`. 순수 알람 전용 —
+  일정 리마인더에는 게이트를 두지 않는다(수업 5분 전에 수학 문제를 풀릴 이유가 없다).
+  값은 예약 시점 payload에 실려 알람 화면(ring overlay)이 해제 방식을 고른다.
+  `not null default 'none'` + check 제약 → 기존 알람의 동작은 그대로. 매핑은 `row.challenge ?? 'none'`
+  으로 한 겹 더 방어한다(0007 이전 백업을 복원한 행)
+- **기상 프리셋**(rusty-alarm `WakeupPresetApplier` 의미 이식): 편안한 기상 / 지각 방지 / 강제 기상.
+  프리셋은 **알람 행 필드(게이트·진동)와 기기 전역(local-settings: 점진 볼륨·볼륨 %·예고 분)을
+  한 번에** 맞춘다. 이미 켜둔 값은 낮추지 않는다(`max`, `preAlarmMinutes === 0`일 때만 채움).
+  스누즈 제한은 계정 전역(`app_settings`)이라 프리셋이 건드리지 않는다 — 알람 하나를 고르다
+  다른 알람의 스누즈가 바뀌는 일을 막는다
+- **되돌리기 스낵바**(`ui/undo-store.ts` + `ui/components/undo-snackbar.tsx`): 삭제는 전부
+  soft delete(`deleted_at`)라 `useRestoreEvent`/`useRestoreAlarm`이 `deleted_at = null` 한 번이면 된다.
+  스낵바는 탭 레이아웃에 **한 번만** 렌더한다 — 삭제한 화면(일정 편집기)은 곧 닫히므로
+  화면 안에 두면 되돌리기 버튼이 화면과 함께 사라진다. 6초 자동 소멸.
+  확인 다이얼로그는 그대로 둔다(되돌리기는 추가 안전망이지 대체재가 아니다)
+- **설정 전역의 도메인 주입**: 도메인은 순수 함수라 저장소를 모른다. `setTimeFormat`(time.ts)·
+  `setWeekStartsOn`(calendar.ts) 모듈 전역에 주입한다. 탭 레이아웃 마운트 시 1회 + 설정 변경 시 즉시.
+  시각 표기를 바꾸면 **알람 payload의 시각 라벨은 예약 시점에 굳으므로** 재계산까지 함께 돌린다
+- **브리핑 주말 제외**(`briefingSkipWeekend`, 기기 로컬): 저녁 브리핑은 내일이, 아침 브리핑은
+  오늘이 주말이면 건너뛴다. stage-4~10에서 미구현으로 남겼던 항목
+- 새 알림의 기본 모드는 기기 로컬(`defaultReminderMode`), 기본 오프셋은 계정
+  (`app_settings.default_reminder_offset`) — 오프셋은 여러 기기에서 같아야 하지만
+  "알람으로 받을지"는 그 기기의 사용 습관이라 저장 위치를 나눴다

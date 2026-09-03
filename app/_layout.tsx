@@ -8,9 +8,12 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { handleAuthDeepLink, useSession } from '@/data/auth';
 import { autoBackupIfDue } from '@/data/backup';
+import { getLocalSettings } from '@/data/local-settings';
 import { initNetListener } from '@/data/net';
 import { QueryProvider } from '@/data/query';
 import { serializeAlarmPayload, type AlarmPayload } from '@/domain/alarm-payload';
+import { setWeekStartsOn } from '@/domain/calendar';
+import { setTimeFormat } from '@/domain/time';
 import {
   ensureChannels,
   getInitialAlarm,
@@ -66,6 +69,11 @@ function Root() {
     let cancelled = false;
 
     (async () => {
+      // 표시 설정 주입 (stage-15). 도메인은 순수 함수라 저장소를 모른다 — 앱 시작 시 1회 밀어넣는다
+      const local = await getLocalSettings();
+      setTimeFormat(local.timeFormat);
+      setWeekStartsOn(local.weekStartsOn);
+
       await ensureChannels();
 
       // 풀스크린 알람 cold start — payload만으로 /alarm-ring 진입 (master §3.5)

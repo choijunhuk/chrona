@@ -6,13 +6,30 @@ import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '@/data/supabase';
-import type { EventRow } from '@/data/mappers';
+import { toDomainEvent, type EventRow } from '@/data/mappers';
+import { expandOccurrences } from '@/domain/schedule';
 import { AppText } from '@/ui/components/text';
 import { useTheme } from '@/ui/theme';
 import { radius, spacing, type ThemeColors } from '@/ui/tokens';
 
 const RECENT_KEY = 'chrona.recent-searches';
 const KIND_LABEL = { schedule: '일정', task: '과제', timetable: '시간표' } as const;
+const TZ = 'Asia/Seoul';
+const OCC_WINDOW_DAYS = 400; // 연 1회 반복도 한 건은 잡히는 폭
+
+/**
+ * 반복 일정의 "지금 이후 첫 회차" (stage-15).
+ * base starts_at을 그대로 넘기면 "이 일정만" 편집이 과거(첫 회차)를 가리킨다.
+ * 반복이 아니거나 창 안에 남은 회차가 없으면 null — occ 없이 열어 전체 편집이 되게 한다.
+ */
+function nextOccurrence(row: EventRow): Date | null {
+  if (!row.rrule) return null;
+  const now = new Date();
+  const to = new Date(now.getTime() + OCC_WINDOW_DAYS * 86400_000);
+  const occs = expandOccurrences([toDomainEvent(row)], { from: now, to }, [], TZ);
+  if (occs.length === 0) return null;
+  return occs.reduce((a, b) => (a.start <= b.start ? a : b)).start;
+}
 
 export default function Search() {
   const { colors } = useTheme();
@@ -130,16 +147,15 @@ export default function Search() {
               <Pressable
                 key={r.id}
                 style={styles.item}
-                onPress={() =>
+                onPress={() => {
+                  // 반복 일정은 기준 회차(지금 이후 첫 회차)를 함께 넘겨
+                  // "이 일정만/이후/전체" 선택이 뜨게 한다. 반복이 아니면 occ 없이 연다
+                  const occ = nextOccurrence(r);
                   router.push({
                     pathname: '/event/[id]',
-                    // 반복 일정은 기준 회차를 함께 넘겨 "이 일정만/이후/전체" 선택이 뜨게 한다
-                    params:
-                      r.rrule && r.starts_at
-                        ? { id: r.id, occ: new Date(r.starts_at).toISOString() }
-                        : { id: r.id },
-                  })
-                }
+                    params: occ ? { id: r.id, occ: occ.toISOString() } : { id: r.id },
+                  });
+                }}
               >
                 {highlight(r.title)}
                 <AppText variant="caption" color="textSub" numberOfLines={1}>

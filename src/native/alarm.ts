@@ -217,9 +217,13 @@ export async function scheduleAlarm(
 /**
  * 알림 액션 버튼 (stage-13 §1): 앱을 열지 않고 해제·스누즈.
  * 스누즈 소진 시 스누즈 버튼을 아예 빼서 "눌러도 아무 일 없음"을 만들지 않는다.
+ *
+ * 해제 게이트 (stage-15): challenge가 걸린 알람은 '해제' 버튼을 아예 넣지 않는다 —
+ * 넣으면 알림 그늘에서 한 번 눌러 게이트를 통째로 우회할 수 있다. 리마인더·일반 알람은 그대로.
  */
 function alarmActions(payload: AlarmPayload, opts?: { snooze?: boolean }) {
-  const actions = [{ title: '해제', pressAction: { id: 'alarm-dismiss' } }];
+  const actions =
+    payload.challenge === 'none' ? [{ title: '해제', pressAction: { id: 'alarm-dismiss' } }] : [];
   // 조용한 리마인더에 스누즈를 주면 snoozeAlarm이 SET_ALARM_CLOCK 알람으로 승격시킨다 → 리마인더는 해제만
   if ((opts?.snooze ?? true) && payload.currentSnoozeCount < payload.maxSnooze) {
     actions.push({
@@ -227,7 +231,7 @@ function alarmActions(payload: AlarmPayload, opts?: { snooze?: boolean }) {
       pressAction: { id: 'alarm-snooze' },
     });
   }
-  return actions;
+  return actions.length > 0 ? actions : undefined;
 }
 
 /** soundKey → res/raw 리소스 이름 (확장자 없음). 시스템 벨소리·미등록 키는 기본음 */

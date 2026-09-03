@@ -17,7 +17,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useCreateEvent, useDeleteEvent, useEvent, useUpdateEvent } from '@/data/hooks/events';
+import {
+  useCreateEvent,
+  useDeleteEvent,
+  useEvent,
+  useRestoreEvent,
+  useUpdateEvent,
+} from '@/data/hooks/events';
+import { localSettingsCache } from '@/data/local-settings';
 import { useReminders, useSaveReminders } from '@/data/hooks/reminders';
 import { useCategories, useSettings } from '@/data/hooks/settings';
 import type { EventDraft, ReminderDraft } from '@/data/mappers';
@@ -37,6 +44,7 @@ import { ColorDot } from '@/ui/components/color-dot';
 import { haptics } from '@/ui/components/haptics';
 import { AppText } from '@/ui/components/text';
 import { useTheme } from '@/ui/theme';
+import { showUndo } from '@/ui/undo-store';
 import { palette, radius, spacing, type ThemeColors } from '@/ui/tokens';
 
 const TZ = 'Asia/Seoul';
@@ -155,11 +163,11 @@ export function EventEditor() {
           endsAt: defaultEnd,
           categoryId: null,
           color: null,
-          // 새 일정: 기본 알림 자동 부착 (사용자 확정: 10분 전)
+          // 새 일정: 기본 알림 자동 부착 (오프셋은 app_settings, 모드는 기기 설정 — stage-15)
           reminders: [
             {
               offsetMinutes: settings?.defaultReminderOffset ?? 10,
-              mode: 'notify' as const,
+              mode: localSettingsCache().defaultReminderMode,
               soundKey: settings?.defaultSoundKey ?? 'default',
               vibrate: true,
               enabled: true,
@@ -198,6 +206,7 @@ function EventForm({
   const createMutation = useCreateEvent();
   const updateMutation = useUpdateEvent();
   const deleteMutation = useDeleteEvent();
+  const restoreMutation = useRestoreEvent();
 
   const [title, setTitle] = useState(initial.title);
   const [memo, setMemo] = useState(initial.memo);
@@ -424,6 +433,13 @@ function EventForm({
     }
   };
 
+  /** soft delete라 되돌릴 수 있다 — 확인 다이얼로그를 통과해도 6초의 여지를 준다 (stage-15) */
+  const deleteWithUndo = () =>
+    deleteMutation.mutateAsync(id).then(() => {
+      showUndo('일정 삭제됨', () => restoreMutation.mutate(id));
+      afterSave();
+    }, onSaveError);
+
   const remove = () => {
     const isRecurring = !!(isCustomRule ? initial.rruleRaw : toRRuleString(repeat));
     if (isRecurring && occurrenceStart) {
@@ -459,7 +475,7 @@ function EventForm({
         {
           text: '모든 일정 삭제',
           style: 'destructive',
-          onPress: () => void deleteMutation.mutateAsync(id).then(afterSave, onSaveError),
+          onPress: () => void deleteWithUndo(),
         },
       ]);
       return;
@@ -469,7 +485,7 @@ function EventForm({
       {
         text: '삭제',
         style: 'destructive',
-        onPress: () => void deleteMutation.mutateAsync(id).then(afterSave, onSaveError),
+        onPress: () => void deleteWithUndo(),
       },
     ]);
   };
@@ -712,7 +728,8 @@ function EventForm({
               style={styles.chip}
               onPress={() => {
                 setShowPresets(false);
-                if (hasReminder(p.minutes, 'notify')) {
+                const mode = localSettingsCache().defaultReminderMode;
+                if (hasReminder(p.minutes, mode)) {
                   ToastAndroid.show('같은 알림이 이미 있어요', ToastAndroid.SHORT);
                   return;
                 }
@@ -720,7 +737,7 @@ function EventForm({
                   ...rs,
                   {
                     offsetMinutes: p.minutes,
-                    mode: 'notify',
+                    mode,
                     soundKey: 'default',
                     vibrate: true,
                     enabled: true,

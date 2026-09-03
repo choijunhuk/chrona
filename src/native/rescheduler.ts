@@ -4,7 +4,7 @@
  * 항상: 스냅샷 로드 → 전개 → 상위 30건 산출 → 전체 취소 → 전체 재예약 → 앵커 재예약.
  * 부분 갱신 금지. headless(부팅/앵커)에서도 동작 — 네트워크 의존 없음(스냅샷).
  */
-import { formatTimeLabel, resolveTimezone, toDateOnly } from '@/domain/time';
+import { formatTimeLabel, resolveTimezone, setTimeFormat, toDateOnly } from '@/domain/time';
 import {
   ALARM_LIMIT,
   alarmKey,
@@ -31,6 +31,12 @@ import {
 
 /** 방해금지 해제 시각 앵커 — 자정 앵커와 별개 id라 서로 덮어쓰지 않는다 */
 export const QUIET_ANCHOR_ID = 'chrona-anchor-quiet';
+
+/** 브리핑 주말 제외 판정 — 기기 로컬 요일 기준 (브리핑 시각 계산도 setHours 로컬) */
+function isWeekend(d: Date): boolean {
+  const day = d.getDay();
+  return day === 0 || day === 6;
+}
 
 export type RescheduleResult = {
   scheduled: number;
@@ -66,6 +72,8 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
   const until = new Date(now.getTime() + 60 * 86400_000); // 60일 창 (master §3.7)
   const tz = resolveTimezone(source.settings);
   const local = await getLocalSettings();
+  // headless(부팅·자정 앵커)에서도 payload의 timeLabel이 12/24시간 설정을 따르게 한다 (stage-15)
+  setTimeFormat(local.timeFormat);
 
   const occurrences = expandOccurrences(source.events, { from: now, to: until }, source.overrides, tz);
   const standalone = expandStandaloneAlarms(source.standaloneAlarms, now, until, tz);
@@ -120,31 +128,34 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
 
     const tomorrowStart = new Date(briefAt);
     tomorrowStart.setHours(24, 0, 0, 0);
-    const tomorrowEnd = new Date(tomorrowStart.getTime() + 86400_000);
-    const tomorrows = occurrences
-      .filter((o) => o.start >= tomorrowStart && o.start < tomorrowEnd)
-      .sort((a, b) => a.start.getTime() - b.start.getTime());
-    const dueSoon = source.events.filter(
-      (e) =>
-        e.kind === 'task' &&
-        !e.isDone &&
-        e.dueAt &&
-        e.dueAt.getTime() - now.getTime() < 3 * 86400_000 &&
-        e.dueAt.getTime() > now.getTime()
-    );
-    const lines: string[] = [];
-    lines.push(
-      tomorrows.length === 0
-        ? '내일은 일정이 없어요'
-        : `내일 일정 ${tomorrows.length}개 · 첫 일정 ${formatTimeLabel(tomorrows[0].start, tz)}`
-    );
-    if (tomorrows.length > 0) {
-      lines.push(tomorrows.slice(0, 3).map((o) => o.title).join(' · '));
+    // 주말 제외 (stage-15): 저녁 브리핑은 "대상 날짜(=내일)"가 토·일이면 걸지 않는다
+    if (!(local.briefingSkipWeekend && isWeekend(tomorrowStart))) {
+      const tomorrowEnd = new Date(tomorrowStart.getTime() + 86400_000);
+      const tomorrows = occurrences
+        .filter((o) => o.start >= tomorrowStart && o.start < tomorrowEnd)
+        .sort((a, b) => a.start.getTime() - b.start.getTime());
+      const dueSoon = source.events.filter(
+        (e) =>
+          e.kind === 'task' &&
+          !e.isDone &&
+          e.dueAt &&
+          e.dueAt.getTime() - now.getTime() < 3 * 86400_000 &&
+          e.dueAt.getTime() > now.getTime()
+      );
+      const lines: string[] = [];
+      lines.push(
+        tomorrows.length === 0
+          ? '내일은 일정이 없어요'
+          : `내일 일정 ${tomorrows.length}개 · 첫 일정 ${formatTimeLabel(tomorrows[0].start, tz)}`
+      );
+      if (tomorrows.length > 0) {
+        lines.push(tomorrows.slice(0, 3).map((o) => o.title).join(' · '));
+      }
+      if (dueSoon.length > 0) {
+        lines.push(`마감 임박: ${dueSoon.map((e) => e.title).slice(0, 2).join(', ')}`);
+      }
+      await scheduleBriefing(lines.join('\n'), briefAt);
     }
-    if (dueSoon.length > 0) {
-      lines.push(`마감 임박: ${dueSoon.map((e) => e.title).slice(0, 2).join(', ')}`);
-    }
-    await scheduleBriefing(lines.join('\n'), briefAt);
   }
 
   // 아침 브리핑 (stage-11): 기기 로컬 설정. 저녁 브리핑과 같은 조용한 알림, 내용은 그날 기준
@@ -155,34 +166,37 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
     morningAt.setHours(mh, mm, 0, 0);
     if (morningAt.getTime() <= now.getTime()) morningAt.setDate(morningAt.getDate() + 1);
 
-    const dayStart = new Date(morningAt);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(dayStart.getTime() + 86400_000);
-    const todays = occurrences
-      .filter((o) => o.start >= morningAt && o.start < dayEnd && o.start >= dayStart)
-      .sort((a, b) => a.start.getTime() - b.start.getTime());
-    const dueToday = source.events.filter(
-      (e) =>
-        e.kind === 'task' &&
-        !e.isDone &&
-        e.dueAt &&
-        e.dueAt >= dayStart &&
-        e.dueAt < dayEnd
-    );
-    const mLines: string[] = [];
-    mLines.push(
-      todays.length === 0
-        ? '오늘은 일정이 없어요'
-        : `오늘 일정 ${todays.length}개 · 첫 일정 ${formatTimeLabel(todays[0].start, tz)}`
-    );
-    if (todays.length > 0) mLines.push(todays.slice(0, 3).map((o) => o.title).join(' · '));
-    if (dueToday.length > 0) {
-      mLines.push(`오늘 마감: ${dueToday.map((e) => e.title).slice(0, 2).join(', ')}`);
+    // 주말 제외 (stage-15): 아침 브리핑은 "그 아침"이 토·일이면 걸지 않는다
+    if (!(local.briefingSkipWeekend && isWeekend(morningAt))) {
+      const dayStart = new Date(morningAt);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart.getTime() + 86400_000);
+      const todays = occurrences
+        .filter((o) => o.start >= morningAt && o.start < dayEnd && o.start >= dayStart)
+        .sort((a, b) => a.start.getTime() - b.start.getTime());
+      const dueToday = source.events.filter(
+        (e) =>
+          e.kind === 'task' &&
+          !e.isDone &&
+          e.dueAt &&
+          e.dueAt >= dayStart &&
+          e.dueAt < dayEnd
+      );
+      const mLines: string[] = [];
+      mLines.push(
+        todays.length === 0
+          ? '오늘은 일정이 없어요'
+          : `오늘 일정 ${todays.length}개 · 첫 일정 ${formatTimeLabel(todays[0].start, tz)}`
+      );
+      if (todays.length > 0) mLines.push(todays.slice(0, 3).map((o) => o.title).join(' · '));
+      if (dueToday.length > 0) {
+        mLines.push(`오늘 마감: ${dueToday.map((e) => e.title).slice(0, 2).join(', ')}`);
+      }
+      await scheduleBriefing(mLines.join('\n'), morningAt, {
+        id: 'chrona-briefing-morning',
+        title: '오늘 브리핑',
+      });
     }
-    await scheduleBriefing(mLines.join('\n'), morningAt, {
-      id: 'chrona-briefing-morning',
-      title: '오늘 브리핑',
-    });
   }
 
   // 상시 알림(③): 오늘 남은 일정 요약 — CRUD·자정 시점에만 갱신 (master §6)

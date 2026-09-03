@@ -13,6 +13,7 @@ import {
   cancelAllTriggers,
   isAlarmRinging,
   scheduleAlarm,
+  scheduleBriefing,
   scheduleMidnightAnchor,
   schedulePreAlarm,
   scheduleReminder,
@@ -28,6 +29,8 @@ type LocalSettings = {
   quietUntil: string | null;
   skippedAlarmKeys: string[];
   alarmTimeoutMinutes: number;
+  timeFormat: '12h' | '24h';
+  briefingSkipWeekend: boolean;
 };
 
 const LOCAL_BASE: LocalSettings = {
@@ -38,6 +41,8 @@ const LOCAL_BASE: LocalSettings = {
   quietUntil: null,
   skippedAlarmKeys: [],
   alarmTimeoutMinutes: 10,
+  timeFormat: '12h',
+  briefingSkipWeekend: false,
 };
 
 // vi.mock 팩토리는 import보다 먼저 평가되므로 상태 홀더도 hoist해야 TDZ에 걸리지 않는다
@@ -119,7 +124,8 @@ function reminder(eventId: string, mode: 'alarm' | 'notify' = 'alarm'): Reminder
     eventId,
     offsetMinutes: 0,
     mode,
-    soundKey: 'default', challenge: 'none',
+    soundKey: 'default',
+    vibrate: true,
     enabled: true,
   } as Reminder;
 }
@@ -159,6 +165,7 @@ const mocked = {
   scheduleAlarm: vi.mocked(scheduleAlarm),
   scheduleReminder: vi.mocked(scheduleReminder),
   schedulePreAlarm: vi.mocked(schedulePreAlarm),
+  scheduleBriefing: vi.mocked(scheduleBriefing),
   anchor: vi.mocked(scheduleMidnightAnchor),
   writePlannedCache: vi.mocked(writePlannedCache),
   setLocalSettings: vi.mocked(setLocalSettings),
@@ -311,6 +318,22 @@ describe('rescheduleAll', () => {
     expect(minutes).toBe(10);
     const fireAt = mocked.scheduleAlarm.mock.calls.find((c) => c[0].eventId === 'standalone:sa1')![1];
     expect(fireAt.getTime() - preAt.getTime()).toBe(10 * 60_000);
+  });
+
+  it('briefingSkipWeekend면 대상 날짜(내일)가 주말인 저녁 브리핑을 걸지 않는다', async () => {
+    vi.useFakeTimers();
+    // 로컬 기준 2026-01-02(금) 10:00 → 브리핑 23:00, 대상 날짜는 1/3(토) → 건너뛴다
+    vi.setSystemTime(new Date(2026, 0, 2, 10, 0, 0));
+    state.local = { ...local(), briefingSkipWeekend: true };
+    const source = sourceWith(1);
+    source.settings.briefingEnabled = true;
+    mocked.read.mockResolvedValue(source as never);
+
+    await rescheduleAll({ refresh: false });
+
+    expect(mocked.scheduleBriefing).not.toHaveBeenCalled();
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   it('스냅샷이 없으면 앵커만 유지한다', async () => {

@@ -5,7 +5,11 @@ import type { StandaloneAlarm } from '@/domain/types';
 import { rescheduleDebounced } from '@/native/rescheduler';
 
 import type { StandaloneAlarmDraft, StandaloneAlarmRow } from '../mappers';
-import { toDomainStandaloneAlarm, toStandaloneAlarmInsert } from '../mappers';
+import {
+  toDomainStandaloneAlarm,
+  toStandaloneAlarmInsert,
+  toStandaloneAlarmUpdate,
+} from '../mappers';
 import { assertOnline, toastMutationError } from '../net';
 import { supabase } from '../supabase';
 
@@ -52,6 +56,19 @@ export function useCreateAlarm() {
   });
 }
 
+/** 편집 저장 (stage-15). enabled는 useToggleAlarm 담당 — 여기선 폼이 다루는 필드만 */
+export function useUpdateAlarm() {
+  return useAlarmMutation(
+    async ({ id, patch }: { id: string; patch: Partial<StandaloneAlarmDraft> }) => {
+      const { error } = await supabase
+        .from('standalone_alarms')
+        .update(toStandaloneAlarmUpdate(patch))
+        .eq('id', id);
+      if (error) throw error;
+    }
+  );
+}
+
 /** 켜기/끄기는 낙관적 업데이트 — 왕복 동안 스위치가 되돌아가 보이면 안 된다 (settings.ts 패턴) */
 export function useToggleAlarm() {
   const qc = useQueryClient();
@@ -92,6 +109,17 @@ export function useDeleteAlarm() {
     const { error } = await supabase
       .from('standalone_alarms')
       .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw error;
+  });
+}
+
+/** 삭제 되돌리기 (stage-15). soft delete라 deleted_at만 되돌리면 된다 */
+export function useRestoreAlarm() {
+  return useAlarmMutation(async (id: string) => {
+    const { error } = await supabase
+      .from('standalone_alarms')
+      .update({ deleted_at: null, updated_at: new Date().toISOString() })
       .eq('id', id);
     if (error) throw error;
   });

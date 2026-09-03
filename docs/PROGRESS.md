@@ -100,3 +100,12 @@
 - 검증: 테스트 122 / typecheck / lint / 웹 빌드 그린. 실기기(무음 모드): `usage=USAGE_ALARM state:started`, `setStreamVolume(STREAM_ALARM 15)`, 해제 시 정지·복원. 피커에 삼성 벨소리 목록 노출·미리듣기 동작
 - 발견한 함정: ① `.gitignore`의 `android/`(슬래시 없음)가 `native/android/`까지 무시 → **위젯 Kotlin 소스가 stage-9부터 한 번도 커밋 안 됨**. 이번에 수정·추적 ② notifee `vibrationPattern`은 0 이하 값 거부 — `[0,250,…]` 불가 ③ 채널 사운드 + 네이티브 재생이 겹침(비무음 폰에서 같은 파일 2중 재생) — stage-0부터 있던 구조, FSI 폴백 목적으로 유지. 거슬리면 채널 sound 제거 검토
 - 미결: 실사용에서 채널/네이티브 2중 재생 체감 확인, 알람 예고 실기기 확인, 순수 알람 기존 항목의 알람음 편집 UI 없음(폼에서만 선택)
+
+## Stage 15 — 해제 게이트·기상 프리셋·설정 확장 (2026-09-03)
+
+- 브랜치 / 커밋: 작업 중 (머지 대기)
+- 계기: rusty-alarm 대비 부족분 정리 — 순수 알람에 해제 게이트가 없고, 만든 알람을 고칠 수 없고(삭제 후 재생성), 주 시작·시각 표기·기본 알림 모드가 하드코딩
+- 구현 요약: `0007_stage15.sql` (`standalone_alarms.challenge` text not null default 'none' + check) · mappers `challenge` 왕복 + `toStandaloneAlarmUpdate` · `useUpdateAlarm`/`useRestoreAlarm`/`useRestoreEvent` · 순수 알람 **편집 UI**(카드 본문 탭 → 프리필 폼, 시각·요일·라벨·알람음·진동·해제 방법) · 기상 프리셋 3종(편안한 기상/지각 방지/강제 기상 — 폼 상태 + 기기 전역 동시 적용, 이미 켜둔 값은 유지) · 되돌리기 스낵바(`undo-store` + 탭 레이아웃 1회 렌더, 6초, 일정·순수 알람 삭제) · 설정 5종 추가(기본 알림 오프셋·기본 알림 모드·주 시작 요일·시각 표기·브리핑 주말 제외) · 도메인 전역 주입(`setTimeFormat`/`setWeekStartsOn`)
+- 검증: 테스트 127개(신규 4 — challenge 매핑/레거시 none/insert/부분 update) 그린. 빌드·실기기: 메인 세션에서
+- 미결: 0007 DB 적용(사용자 psql), 게이트 실동작·프리셋 체감·되돌리기 실기기 확인
+- 발견한 함정: ① 되돌리기 UI를 삭제한 화면 안에 두면 화면이 닫히며 같이 사라진다 — 탭 레이아웃에 한 번만 렌더하고 스토어로 넘긴다 ② 시각 표기 변경은 화면만 다시 그려선 부족 — 알람 payload의 라벨은 예약 시점에 굳으므로 재계산 필요 ③ 프리셋이 계정 전역(스누즈 한도)까지 건드리면 알람 하나 고르다 다른 알람이 바뀐다 — 기기 로컬 값만 조정

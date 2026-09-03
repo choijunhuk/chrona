@@ -26,6 +26,7 @@ import {
   WEEKDAY_LABELS,
   addDaysOnly,
   addMonths,
+  getWeekStartsOn,
   monthGrid,
   monthOf,
   weekIndexOf,
@@ -42,6 +43,15 @@ import { DaySheet } from './day-sheet';
 import { MonthPage, MAX_LANES, type OverflowMap, type WeekBar } from './month-page';
 
 const TZ = 'Asia/Seoul';
+
+/**
+ * 요일 헤더는 monthGrid의 열 순서와 반드시 같아야 한다 (stage-15).
+ * WEEKDAY_LABELS는 월 시작 고정이라 일요일 시작이면 한 칸 회전시킨다.
+ */
+function weekdayHeader(): readonly string[] {
+  if (getWeekStartsOn() === 1) return WEEKDAY_LABELS;
+  return [WEEKDAY_LABELS[6], ...WEEKDAY_LABELS.slice(0, 6)];
+}
 
 export function CalendarScreen() {
   const router = useRouter();
@@ -317,11 +327,11 @@ export function CalendarScreen() {
       </View>
 
       <View style={styles.weekdays}>
-        {WEEKDAY_LABELS.map((w, i) => (
+        {weekdayHeader().map((w) => (
           <AppText
             key={w}
             variant="micro"
-            color={i >= 5 ? 'textDim' : 'textSub'}
+            color={w === '토' || w === '일' ? 'textDim' : 'textSub'}
             style={styles.weekdayLabel}
           >
             {w}

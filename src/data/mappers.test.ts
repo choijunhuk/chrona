@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import { asDateOnly } from '@/domain/time';
 
-import type { EventDraft, EventRow } from './mappers';
+import type { EventDraft, EventRow, StandaloneAlarmRow } from './mappers';
 import {
   toDomainEvent,
   toDomainSettings,
+  toDomainStandaloneAlarm,
   toEventInsert,
   toSettingsUpdate,
+  toStandaloneAlarmInsert,
+  toStandaloneAlarmUpdate,
 } from './mappers';
 
 const baseRow: EventRow = {
@@ -184,5 +187,59 @@ describe('settings 매핑', () => {
     expect(u.snooze_minutes).toBe(10);
     expect(u.updated_at).toBeTruthy();
     expect(u.briefing_enabled).toBeUndefined();
+  });
+});
+
+describe('standalone_alarms 매핑 (stage-15 challenge)', () => {
+  const alarmRow: StandaloneAlarmRow = {
+    id: 'a1',
+    user_id: 'u1',
+    time: '07:00:00',
+    weekdays: [1, 2, 3, 4, 5],
+    label: '기상',
+    enabled: true,
+    sound_key: 'default',
+    vibrate: true,
+    challenge: 'shake',
+    updated_at: '2026-09-01T00:00:00.000Z',
+    deleted_at: null,
+  };
+
+  it('time HH:MM 정규화 + challenge 그대로', () => {
+    const a = toDomainStandaloneAlarm(alarmRow);
+    expect(a.time).toBe('07:00');
+    expect(a.challenge).toBe('shake');
+  });
+
+  it('challenge가 없는 옛 행(0007 이전 백업)은 none으로 (기존 동작 유지)', () => {
+    const legacy = { ...alarmRow } as Partial<StandaloneAlarmRow>;
+    delete legacy.challenge;
+    expect(toDomainStandaloneAlarm(legacy as StandaloneAlarmRow).challenge).toBe('none');
+  });
+
+  it('toStandaloneAlarmInsert: challenge 포함 + updated_at 명시 (§7.3)', () => {
+    const insert = toStandaloneAlarmInsert(
+      {
+        time: '07:00',
+        weekdays: [],
+        label: null,
+        enabled: true,
+        soundKey: 'default',
+        vibrate: true,
+        challenge: 'math',
+      },
+      'u1'
+    );
+    expect(insert.challenge).toBe('math');
+    expect(insert.user_id).toBe('u1');
+    expect(insert.updated_at).toBeTruthy();
+  });
+
+  it('toStandaloneAlarmUpdate: 전달한 필드만 + updated_at 항상 포함', () => {
+    const u = toStandaloneAlarmUpdate({ challenge: 'none', vibrate: false });
+    expect(u.challenge).toBe('none');
+    expect(u.vibrate).toBe(false);
+    expect(u.time).toBeUndefined();
+    expect(u.updated_at).toBeTruthy();
   });
 });

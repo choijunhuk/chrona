@@ -49,7 +49,7 @@ function rem(partial: Partial<Reminder>): Reminder {
     eventId: 'e1',
     offsetMinutes: 10,
     mode: 'notify',
-    soundKey: 'default', challenge: 'none',
+    soundKey: 'default',
     vibrate: true,
     enabled: true,
     ...partial,
@@ -162,8 +162,9 @@ describe('computeAlarmTimes', () => {
       weekdays: [],
       label: '기상',
       enabled: true,
-      soundKey: 'default', challenge: 'none',
+      soundKey: 'default',
       vibrate: true,
+      challenge: 'none',
     };
     const standalone = expandStandaloneAlarms([alarm], NOW, RANGE.to, TZ);
     const planned = computeAlarmTimes([], [], standalone, NOW, ALARM_LIMIT, SETTINGS);
@@ -182,8 +183,9 @@ describe('expandStandaloneAlarms', () => {
       weekdays: [1, 2, 3, 4, 5], // 월~금
       label: '평일',
       enabled: true,
-      soundKey: 'default', challenge: 'none',
+      soundKey: 'default',
       vibrate: true,
+      challenge: 'none',
     };
     const fires = expandStandaloneAlarms([weekdayAlarm], NOW, new Date(NOW.getTime() + 14 * 86400_000), TZ);
     expect(fires.length).toBe(10); // 2주간 평일 10회
@@ -217,7 +219,8 @@ describe('applyAlarmFilters (stage-13)', () => {
       snoozeMinutes: 5,
       maxSnooze: 3,
       currentSnoozeCount: 0,
-      soundKey: 'default', challenge: 'none',
+      soundKey: 'default',
+      challenge: 'none',
     },
   });
   const a = mk('a', '2026-09-02T09:00:00Z');

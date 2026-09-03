@@ -91,6 +91,7 @@ type StandaloneAlarmRow = {
   enabled: boolean;
   sound_key: string;
   vibrate: boolean;
+  challenge: string; // 0007 — 해제 게이트 'none' | 'math' | 'shake'
   updated_at: string;
   deleted_at: string | null;
 };

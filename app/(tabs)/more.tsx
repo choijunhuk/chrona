@@ -36,6 +36,8 @@ import {
   dismissAlarm,
   soundLabel,
 } from '@/native/alarm';
+import { setWeekStartsOn } from '@/domain/calendar';
+import { setTimeFormat } from '@/domain/time';
 import { rescheduleAll, rescheduleDebounced } from '@/native/rescheduler';
 import { SoundPicker } from '@/ui/components/sound-picker';
 import { AppText } from '@/ui/components/text';
@@ -159,6 +161,56 @@ export default function More() {
       onPick: (v) => patchLocal({ alarmVolumePercent: Number(v) }),
     });
 
+  // ── 표기·기본값 (stage-15) ─────────────────────────────
+  const chooseReminderOffset = () =>
+    setChooser({
+      title: '기본 알림 오프셋',
+      options: [0, 5, 10, 15, 30, 60].map((m) => ({
+        label: m === 0 ? '정시' : `${m}분 전`,
+        value: m,
+      })),
+      onPick: (v) => updateSettings.mutate({ defaultReminderOffset: Number(v) }),
+    });
+
+  const chooseReminderMode = () =>
+    setChooser({
+      title: '기본 알림 모드',
+      options: [
+        { label: '알림', value: 'notify' },
+        { label: '알람', value: 'alarm' },
+      ],
+      onPick: (v) => patchLocal({ defaultReminderMode: v as 'notify' | 'alarm' }),
+    });
+
+  const chooseWeekStart = () =>
+    setChooser({
+      title: '주 시작 요일',
+      options: [
+        { label: '월요일', value: 1 },
+        { label: '일요일', value: 0 },
+      ],
+      onPick: (v) => {
+        const d = Number(v) as 0 | 1;
+        setWeekStartsOn(d); // 도메인 격자에 즉시 반영 (다음 렌더부터)
+        patchLocal({ weekStartsOn: d });
+      },
+    });
+
+  const chooseTimeFormat = () =>
+    setChooser({
+      title: '시각 표기',
+      options: [
+        { label: '오전/오후', value: '12h' },
+        { label: '24시간', value: '24h' },
+      ],
+      onPick: (v) => {
+        const f = v as '12h' | '24h';
+        setTimeFormat(f);
+        // 알람 payload의 시각 라벨은 재계산 때 굳는다 — 다시 예약해야 바뀐 표기가 반영된다
+        patchLocal({ timeFormat: f }, true);
+      },
+    });
+
   const choosePreAlarm = () =>
     setChooser({
       title: '알람 예고 (순수 알람 N분 전 약한 진동)',
@@ -224,6 +276,18 @@ export default function More() {
             thumbColor={colors.white}
           />
         </View>
+        <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={chooseWeekStart}>
+          <AppText>주 시작 요일</AppText>
+          <AppText color="accent">{localS.weekStartsOn === 0 ? '일요일' : '월요일'}</AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={chooseTimeFormat}>
+          <AppText>시각 표기</AppText>
+          <AppText color="accent">
+            {localS.timeFormat === '24h' ? '24시간' : '오전/오후'}
+          </AppText>
+        </Pressable>
         <View style={styles.divider} />
         <View style={styles.row}>
           <AppText>시험기간 모드</AppText>
@@ -402,6 +466,22 @@ export default function More() {
           <AppText color="accent">{soundLabel(settings?.defaultSoundKey)}</AppText>
         </Pressable>
         <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={chooseReminderOffset}>
+          <AppText>기본 알림 오프셋</AppText>
+          <AppText color="accent" nums>
+            {(settings?.defaultReminderOffset ?? 10) === 0
+              ? '정시'
+              : `${settings?.defaultReminderOffset ?? 10}분 전`}
+          </AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={chooseReminderMode}>
+          <AppText>기본 알림 모드</AppText>
+          <AppText color="accent">
+            {localS.defaultReminderMode === 'alarm' ? '알람' : '알림'}
+          </AppText>
+        </Pressable>
+        <View style={styles.divider} />
         <Pressable style={styles.row} onPress={chooseVolume}>
           <AppText>알람 볼륨</AppText>
           <AppText color="accent" nums>{localS.alarmVolumePercent}%</AppText>
@@ -484,6 +564,21 @@ export default function More() {
               {localS.morningBriefingTime}
             </AppText>
           </Pressable>
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <View style={styles.rowLabel}>
+            <AppText>브리핑 주말 제외</AppText>
+            <AppText variant="caption" color="textDim">
+              주말엔 브리핑을 보내지 않아요
+            </AppText>
+          </View>
+          <Switch
+            value={localS.briefingSkipWeekend}
+            onValueChange={(v) => patchLocal({ briefingSkipWeekend: v }, true)}
+            trackColor={{ true: colors.accent, false: colors.border }}
+            thumbColor={colors.white}
+          />
         </View>
         <View style={styles.divider} />
         <View style={styles.row}>
