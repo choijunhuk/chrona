@@ -194,6 +194,7 @@ export function computeAlarmTimes(
           maxSnooze: settings.maxSnoozeCount,
           currentSnoozeCount: 0,
           soundKey: r.soundKey || settings.defaultSoundKey,
+          challenge: 'none',
         },
       });
     }
@@ -214,6 +215,7 @@ export function computeAlarmTimes(
         maxSnooze: settings.maxSnoozeCount,
         currentSnoozeCount: 0,
         soundKey: alarm.soundKey || settings.defaultSoundKey,
+        challenge: alarm.challenge ?? 'none',
       },
     });
   }

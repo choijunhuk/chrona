@@ -49,7 +49,7 @@ function rem(partial: Partial<Reminder>): Reminder {
     eventId: 'e1',
     offsetMinutes: 10,
     mode: 'notify',
-    soundKey: 'default',
+    soundKey: 'default', challenge: 'none',
     vibrate: true,
     enabled: true,
     ...partial,
@@ -162,7 +162,7 @@ describe('computeAlarmTimes', () => {
       weekdays: [],
       label: '기상',
       enabled: true,
-      soundKey: 'default',
+      soundKey: 'default', challenge: 'none',
       vibrate: true,
     };
     const standalone = expandStandaloneAlarms([alarm], NOW, RANGE.to, TZ);
@@ -182,7 +182,7 @@ describe('expandStandaloneAlarms', () => {
       weekdays: [1, 2, 3, 4, 5], // 월~금
       label: '평일',
       enabled: true,
-      soundKey: 'default',
+      soundKey: 'default', challenge: 'none',
       vibrate: true,
     };
     const fires = expandStandaloneAlarms([weekdayAlarm], NOW, new Date(NOW.getTime() + 14 * 86400_000), TZ);
@@ -195,7 +195,7 @@ describe('expandStandaloneAlarms', () => {
 
   it('disabled 알람 무시, 1회성은 첫 발화만', () => {
     const off: StandaloneAlarm = {
-      id: 'a3', time: '07:00', weekdays: [], label: null, enabled: false, soundKey: 'default', vibrate: true,
+      id: 'a3', time: '07:00', weekdays: [], label: null, enabled: false, soundKey: 'default', vibrate: true, challenge: 'none',
     };
     expect(expandStandaloneAlarms([off], NOW, RANGE.to, TZ)).toHaveLength(0);
     const oneShot: StandaloneAlarm = { ...off, id: 'a4', enabled: true };
@@ -217,7 +217,7 @@ describe('applyAlarmFilters (stage-13)', () => {
       snoozeMinutes: 5,
       maxSnooze: 3,
       currentSnoozeCount: 0,
-      soundKey: 'default',
+      soundKey: 'default', challenge: 'none',
     },
   });
   const a = mk('a', '2026-09-02T09:00:00Z');

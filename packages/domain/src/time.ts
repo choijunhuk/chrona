@@ -36,9 +36,19 @@ export function fromDateOnly(s: DateOnly, tz: string): Date {
 }
 
 /** '오후 9:00' — 알람 payload용 포맷 (master §3.5) */
+let timeFormat: '12h' | '24h' = '12h';
+/** 앱 시작·설정 변경 시 1회 호출. 도메인은 순수 함수라 설정 저장소를 모른다 — 전역 토글로 주입 (stage-15) */
+export function setTimeFormat(f: '12h' | '24h'): void {
+  timeFormat = f;
+}
+export function getTimeFormat(): '12h' | '24h' {
+  return timeFormat;
+}
+
 export function formatTimeLabel(d: Date, tz?: string): string {
   const h = tz ? Number(formatInTimeZone(d, tz, 'H')) : d.getHours();
   const m = tz ? Number(formatInTimeZone(d, tz, 'm')) : d.getMinutes();
+  if (timeFormat === '24h') return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   const meridiem = h < 12 ? '오전' : '오후';
   const hour12 = h % 12 === 0 ? 12 : h % 12;
   return `${meridiem} ${hour12}:${String(m).padStart(2, '0')}`;

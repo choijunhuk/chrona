@@ -10,7 +10,16 @@ import { addDays, format, startOfWeek } from 'date-fns';
 import type { DateOnly } from './time';
 import { asDateOnly } from './time';
 
-export const WEEK_STARTS_ON = 1 as const; // 월요일
+let weekStartsOn: 0 | 1 = 1; // 월요일 기본
+/** 주 시작 요일 주입 (stage-15). monthGrid/weekOf 가 참조 */
+export function setWeekStartsOn(d: 0 | 1): void {
+  weekStartsOn = d;
+}
+export function getWeekStartsOn(): 0 | 1 {
+  return weekStartsOn;
+}
+/** @deprecated getWeekStartsOn() 사용 — 설정으로 바뀔 수 있다 */
+export const WEEK_STARTS_ON = 1 as const;
 
 /** 요일 라벨 (월 시작) */
 export const WEEKDAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'] as const;
@@ -32,7 +41,7 @@ export type MonthGridCell = {
 /** 해당 월의 6주 × 7일 격자 (항상 6주 — 드래그 전환 시 높이 고정용) */
 export function monthGrid(year: number, month: number): MonthGridCell[][] {
   const first = new Date(year, month - 1, 1, 12);
-  let cursor = startOfWeek(first, { weekStartsOn: WEEK_STARTS_ON });
+  let cursor = startOfWeek(first, { weekStartsOn });
   const weeks: MonthGridCell[][] = [];
   for (let w = 0; w < 6; w++) {
     const week: MonthGridCell[] = [];
@@ -47,7 +56,7 @@ export function monthGrid(year: number, month: number): MonthGridCell[][] {
 
 /** date가 속한 주 (월요일 시작, 7일) */
 export function weekOf(date: DateOnly): DateOnly[] {
-  let cursor = startOfWeek(toLocalDate(date), { weekStartsOn: WEEK_STARTS_ON });
+  let cursor = startOfWeek(toLocalDate(date), { weekStartsOn });
   const days: DateOnly[] = [];
   for (let i = 0; i < 7; i++) {
     days.push(fmt(cursor));

@@ -77,6 +77,9 @@ export type Reminder = {
   enabled: boolean;
 };
 
+/** 해제 게이트 (stage-15): 순수 알람 전용. 'none'이면 밀어서 해제 */
+export type ChallengeType = 'none' | 'math' | 'shake';
+
 export type StandaloneAlarm = {
   id: string;
   time: string; // 'HH:MM'
@@ -85,6 +88,7 @@ export type StandaloneAlarm = {
   enabled: boolean;
   soundKey: string;
   vibrate: boolean;
+  challenge: ChallengeType;
 };
 
 export type FocusSession = {

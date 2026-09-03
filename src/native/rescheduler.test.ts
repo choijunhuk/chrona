@@ -119,7 +119,7 @@ function reminder(eventId: string, mode: 'alarm' | 'notify' = 'alarm'): Reminder
     eventId,
     offsetMinutes: 0,
     mode,
-    soundKey: 'default',
+    soundKey: 'default', challenge: 'none',
     enabled: true,
   } as Reminder;
 }
@@ -296,7 +296,7 @@ describe('rescheduleAll', () => {
         weekdays: [],
         label: '기상',
         enabled: true,
-        soundKey: 'default',
+        soundKey: 'default', challenge: 'none',
         vibrate: true,
       },
     ] as never;

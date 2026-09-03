@@ -43,7 +43,7 @@ describe('serializeAlarmPayload / parseAlarmPayload', () => {
       snoozeMinutes: 5,
       maxSnooze: 3,
       currentSnoozeCount: 0,
-      soundKey: 'default',
+      soundKey: 'default', challenge: 'none',
     });
   });
 

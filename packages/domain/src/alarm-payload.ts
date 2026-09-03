@@ -14,6 +14,8 @@ export type AlarmPayload = {
   maxSnooze: number;
   currentSnoozeCount: number;
   soundKey: string;
+  /** 'none' | 'math' | 'shake' — 순수 알람 해제 게이트 (stage-15). 리마인더는 항상 'none' */
+  challenge: string;
 };
 
 /** Notifee notification.data 는 Record<string, string> 만 허용 → 숫자 필드를 문자열로 직렬화 */
@@ -30,6 +32,7 @@ export function serializeAlarmPayload(p: AlarmPayload): SerializedAlarmPayload {
     maxSnooze: String(p.maxSnooze),
     currentSnoozeCount: String(p.currentSnoozeCount),
     soundKey: p.soundKey,
+    challenge: p.challenge,
   };
 }
 
@@ -56,5 +59,6 @@ export function parseAlarmPayload(data: Record<string, unknown> | undefined): Al
     maxSnooze: num('maxSnooze', 3),
     currentSnoozeCount: num('currentSnoozeCount', 0),
     soundKey: str('soundKey', 'default'),
+    challenge: str('challenge', 'none'),
   };
 }

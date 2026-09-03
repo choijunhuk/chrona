@@ -22,6 +22,14 @@ export type LocalSettings = {
   alarmVolumePercent: number;
   /** 순수 알람 N분 전 '곧 알람' 예고 (저중요도 알림 + 약한 진동). 0 = 끔 */
   preAlarmMinutes: number;
+  /** 주 시작 요일: 0=일, 1=월 (stage-15) */
+  weekStartsOn: 0 | 1;
+  /** 시각 표기 (stage-15) */
+  timeFormat: '12h' | '24h';
+  /** 브리핑 주말 제외: 저녁 브리핑은 내일이 주말이면, 아침 브리핑은 오늘이 주말이면 건너뜀 */
+  briefingSkipWeekend: boolean;
+  /** 새 알림 기본 모드 (일정 편집기 '알림 추가' 초기값) */
+  defaultReminderMode: 'notify' | 'alarm';
 };
 
 export const LOCAL_DEFAULTS: LocalSettings = {
@@ -34,6 +42,10 @@ export const LOCAL_DEFAULTS: LocalSettings = {
   alarmTimeoutMinutes: 10,
   alarmVolumePercent: 100,
   preAlarmMinutes: 0,
+  weekStartsOn: 1,
+  timeFormat: '12h',
+  briefingSkipWeekend: false,
+  defaultReminderMode: 'notify',
 };
 
 let cache: LocalSettings | null = null;
