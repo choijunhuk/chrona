@@ -91,3 +91,12 @@
 - 실기기 검증 (SM-S928N, 2026-09-03 새벽): ① 포그라운드 발화 → /alarm-ring warm 오픈 ✓ ② 뒤로가기 → 소리·FGS·알림 전부 정지 ✓ ③ 앱 백그라운드+화면 켜짐 → 헤드업(삼성 캡슐) + 펼치면 해제/스누즈 5분 버튼 ✓ ④ 알림 해제 버튼 → 앱 안 열고 정지 ✓ ⑤ headless 자동 종료(10분) — 아래 함정 ⑤ 계기로 추가, 검증 결과는 다음 항목
 - 미결: 방해금지·건너뛰기·알람음 4종 청취·SAF 폴더·자동 백업 복원·스누즈 생존 실기기 확인. 웹 터치는 구조 검증만 — 실폰 확인 필요. expo-audio 재생이 USAGE_MEDIA 스트림 — 무음 모드에서 앱 자체 사운드가 죽을 수 있음(채널 사운드는 별도) → 알람 스트림 지정 검토
 - 발견한 함정: ① 리마인더에 스누즈 액션 주면 snoozeAlarm이 SET_ALARM_CLOCK 알람으로 승격 — 리마인더는 해제만 ② 웹 셀별 pointerdown은 implicit capture 때문에 형제 셀 enter 안 옴 — 컨테이너 캡처 + elementFromPoint ③ `Alert.alert`는 버튼 3개 제한 — 선택지 5개는 Modal 시트 ④ opus 세션 한도(429)로 서브에이전트 3개 중단 — SendMessage로 컨텍스트 유지 재개 가능 ⑤ **알림 권한 NONE 상태에서 알람 발화 시 UI 0 + 무한 울림** → 사용자가 앱 삭제로 끔(재설치 uid 변경으로 확인). 자동 종료가 /alarm-ring 화면에만 있었음 → headless `timeout:<id>` 트리거로 이전(42bcbb4) ⑥ `adb install -r`은 데이터 유지하지만 앱이 삭제돼 있으면 로그인·알림 권한·배터리 설정 전부 초기화 — `pm grant POST_NOTIFICATIONS` + `appops set USE_FULL_SCREEN_INTENT allow` + `deviceidle whitelist +`로 복구 가능 ⑦ 앱 로그인 직후 첫 재계산은 세션 전 조회라 0건 — 포그라운드 재진입 시 정상(26건) ⑧ **Notifee ForegroundService는 manifest에 `foregroundServiceType="shortService"`** — Android 14+에서 3분 지나면 `Short FGS ANR'ed` → 앱 강제 종료("앱 종료됨" 다이얼로그). 3분 넘게 울린 알람이 앱을 죽이고 있었음. config plugin이 `mediaPlayback`으로 tools:replace + 알림에 `foregroundServiceTypes` 지정(c0e48c7). 실기기 FGS types=0x2 확인
+
+## Stage 14 — 알람 스트림 네이티브 재생 + 벨소리 피커 (2026-09-03)
+
+- 커밋: `cf1ea1b` (main 직접, 푸시됨)
+- 계기: rusty-alarm(사용자 자작) 비교 → Chrona 알람음이 expo-audio `USAGE_MEDIA` + Notifee 채널 `USAGE_NOTIFICATION` → **무음/진동 모드에서 둘 다 안 울림**
+- 구현 요약: Kotlin `ChronaAlarmSoundModule` (MediaPlayer `USAGE_ALARM`, STREAM_ALARM 최대 강제·복원, `AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE`, 웨이크락 15분, 램프, 미리듣기, `RingtoneManager` TYPE_ALARM 목록) · alarm.ts가 네이티브로 위임(expo-audio 제거) · `SoundPicker` 공용 컴포넌트(설정 기본음·리마인더별·순수 알람 폼) — 내장 5 + 무음 + 시스템 벨소리 · 설정 "알람 볼륨 %"(로컬) · "알람 예고 N분 전"(순수 알람만, `chrona.prealarm` 저중요도 진동 채널, rusty-alarm PreAlarm 이식) · rescheduler 테스트 +1
+- 검증: 테스트 122 / typecheck / lint / 웹 빌드 그린. 실기기(무음 모드): `usage=USAGE_ALARM state:started`, `setStreamVolume(STREAM_ALARM 15)`, 해제 시 정지·복원. 피커에 삼성 벨소리 목록 노출·미리듣기 동작
+- 발견한 함정: ① `.gitignore`의 `android/`(슬래시 없음)가 `native/android/`까지 무시 → **위젯 Kotlin 소스가 stage-9부터 한 번도 커밋 안 됨**. 이번에 수정·추적 ② notifee `vibrationPattern`은 0 이하 값 거부 — `[0,250,…]` 불가 ③ 채널 사운드 + 네이티브 재생이 겹침(비무음 폰에서 같은 파일 2중 재생) — stage-0부터 있던 구조, FSI 폴백 목적으로 유지. 거슬리면 채널 sound 제거 검토
+- 미결: 실사용에서 채널/네이티브 2중 재생 체감 확인, 알람 예고 실기기 확인, 순수 알람 기존 항목의 알람음 편집 UI 없음(폼에서만 선택)
