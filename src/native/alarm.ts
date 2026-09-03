@@ -705,9 +705,13 @@ async function handleEvent({ type, detail }: Event): Promise<void> {
     }
     if (isAlarmChannel(notification?.android?.channelId)) {
       await overrideOlderAlarms(notification?.id);
+      const payload = parseAlarmPayload(notification?.data);
       if (notification?.id) {
-        await scheduleAlarmTimeout(notification.id, parseAlarmPayload(notification.data));
+        await scheduleAlarmTimeout(notification.id, payload);
       }
+      // 1회성 순수 알람은 울린 순간 DB에서 끈다 — 다음 재계산이 내일 또 잡지 않게
+      const { disableOneShotAlarmIfNeeded } = await import('@/data/oneshot');
+      void disableOneShotAlarmIfNeeded(payload.eventId);
       notifyAlarmDelivered(notification?.id, notification?.data);
     }
   }
