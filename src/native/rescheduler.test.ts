@@ -14,6 +14,7 @@ import {
   isAlarmRinging,
   scheduleAlarm,
   scheduleMidnightAnchor,
+  schedulePreAlarm,
   scheduleReminder,
 } from '@/native/alarm';
 import { writePlannedCache } from '@/native/planned-cache';
@@ -59,6 +60,7 @@ vi.mock('@/native/alarm', () => ({
   scheduleAlarm: vi.fn(async () => 'id'),
   scheduleBriefing: vi.fn(async () => 'id'),
   scheduleMidnightAnchor: vi.fn(async () => 'id'),
+  schedulePreAlarm: vi.fn(async () => 'id'),
   scheduleReminder: vi.fn(async () => 'id'),
   showOngoing: vi.fn(async () => undefined),
 }));
@@ -156,6 +158,7 @@ const mocked = {
   cancelAllTriggers: vi.mocked(cancelAllTriggers),
   scheduleAlarm: vi.mocked(scheduleAlarm),
   scheduleReminder: vi.mocked(scheduleReminder),
+  schedulePreAlarm: vi.mocked(schedulePreAlarm),
   anchor: vi.mocked(scheduleMidnightAnchor),
   writePlannedCache: vi.mocked(writePlannedCache),
   setLocalSettings: vi.mocked(setLocalSettings),
@@ -281,6 +284,33 @@ describe('rescheduleAll', () => {
 
     expect(mocked.scheduleReminder).toHaveBeenCalledTimes(2);
     expect(mocked.scheduleAlarm).not.toHaveBeenCalled();
+  });
+
+  it('preAlarmMinutes>0 이면 순수 알람에만 N분 전 예고를 건다 (일정 알람은 제외)', async () => {
+    const source = sourceWith(1, { firstHours: 2 });
+    const hhmm = new Date(Date.now() + 3 * 3600_000);
+    source.standaloneAlarms = [
+      {
+        id: 'sa1',
+        time: `${String(hhmm.getHours()).padStart(2, '0')}:${String(hhmm.getMinutes()).padStart(2, '0')}`,
+        weekdays: [],
+        label: '기상',
+        enabled: true,
+        soundKey: 'default',
+        vibrate: true,
+      },
+    ] as never;
+    state.local = { ...local(), preAlarmMinutes: 10 };
+    mocked.read.mockResolvedValue(source as never);
+
+    await rescheduleAll({ refresh: false });
+
+    expect(mocked.schedulePreAlarm).toHaveBeenCalledTimes(1);
+    const [payload, preAt, minutes] = mocked.schedulePreAlarm.mock.calls[0];
+    expect(payload.eventId).toBe('standalone:sa1');
+    expect(minutes).toBe(10);
+    const fireAt = mocked.scheduleAlarm.mock.calls.find((c) => c[0].eventId === 'standalone:sa1')![1];
+    expect(fireAt.getTime() - preAt.getTime()).toBe(10 * 60_000);
   });
 
   it('스냅샷이 없으면 앵커만 유지한다', async () => {

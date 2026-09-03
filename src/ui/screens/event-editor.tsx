@@ -29,7 +29,8 @@ import {
   type RepeatConfig,
 } from '@/domain/rrule-ui';
 import { useUpsertOverride } from '@/data/hooks/overrides';
-import { SOUND_OPTIONS, soundLabel } from '@/native/alarm';
+import { soundLabel } from '@/native/alarm';
+import { SoundPicker } from '@/ui/components/sound-picker';
 import { asDateOnly, formatTimeLabel, fromDateOnly, isDateOnly, toDateOnly } from '@/domain/time';
 import { Button } from '@/ui/components/button';
 import { ColorDot } from '@/ui/components/color-dot';
@@ -253,16 +254,10 @@ function EventForm({
     setReminders((rs) => rs.map((x, j) => (j === i ? { ...x, mode: next } : x)));
   };
 
-  const cycleReminderSound = (i: number) => {
-    haptics.selection();
-    setReminders((rs) =>
-      rs.map((x, j) => {
-        if (j !== i) return x;
-        const at = SOUND_OPTIONS.findIndex((o) => o.key === x.soundKey);
-        return { ...x, soundKey: SOUND_OPTIONS[(at + 1) % SOUND_OPTIONS.length].key };
-      })
-    );
-  };
+  const [soundPickIndex, setSoundPickIndex] = useState<number | null>(null);
+  const setReminderSound = (i: number, key: string) =>
+    setReminders((rs) => rs.map((x, idx) => (idx === i ? { ...x, soundKey: key } : x)));
+
 
   const buildDraft = (): EventDraft => {
     if (kind === 'timetable') {
@@ -688,7 +683,7 @@ function EventForm({
             </AppText>
           </Pressable>
           {/* 알람음: 탭할 때마다 다음 음으로 (피커 모달 없이) */}
-          <Pressable style={styles.modeChip} onPress={() => cycleReminderSound(i)}>
+          <Pressable style={styles.modeChip} onPress={() => setSoundPickIndex(i)}>
             <AppText variant="caption" color="textSub">
               {soundLabel(r.soundKey)}
             </AppText>
@@ -814,6 +809,12 @@ function EventForm({
           onChange={onPickerChange}
         />
       )}
+      <SoundPicker
+        visible={soundPickIndex !== null}
+        value={soundPickIndex !== null ? reminders[soundPickIndex]?.soundKey : undefined}
+        onPick={(key) => soundPickIndex !== null && setReminderSound(soundPickIndex, key)}
+        onClose={() => setSoundPickIndex(null)}
+      />
     </ScrollView>
   );
 }

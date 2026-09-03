@@ -24,6 +24,7 @@ import {
   scheduleBriefing,
   scheduleAlarm,
   scheduleMidnightAnchor,
+  schedulePreAlarm,
   scheduleReminder,
   showOngoing,
 } from '@/native/alarm';
@@ -94,6 +95,14 @@ async function run(refresh: boolean): Promise<RescheduleResult> {
   for (const p of planned) {
     if (p.mode === 'alarm') await scheduleAlarm(p.payload, p.fireAt);
     else await scheduleReminder(p.payload, p.fireAt);
+  }
+  // 순수 알람(기상용) N분 전 예고 — 저중요도 알림 + 약한 진동 (stage-14, rusty-alarm PreAlarm 이식)
+  if (local.preAlarmMinutes > 0) {
+    for (const p of planned) {
+      if (p.mode !== 'alarm' || !p.payload.eventId.startsWith('standalone:')) continue;
+      const preAt = new Date(p.fireAt.getTime() - local.preAlarmMinutes * 60_000);
+      if (preAt.getTime() > now.getTime()) await schedulePreAlarm(p.payload, preAt, local.preAlarmMinutes);
+    }
   }
   await scheduleMidnightAnchor();
   // 방해금지 해제 시각에도 앵커를 걸어둔다 — 앱을 열지 않아도 알람이 되살아나야 한다

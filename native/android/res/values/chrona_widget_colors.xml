@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- JS 토큰 대응 (ARCHITECTURE.md 기록): bg=#F6F7FA surface=#FFFFFF text=#191B20 sub=#616878 accent=#5B6AE8 -->
+<resources>
+    <color name="chrona_widget_bg">#F6F7FA</color>
+    <color name="chrona_widget_text">#191B20</color>
+    <color name="chrona_widget_sub">#616878</color>
+    <color name="chrona_widget_accent">#5B6AE8</color>
+</resources>

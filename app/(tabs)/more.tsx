@@ -35,9 +35,9 @@ import {
   cancelSnoozes,
   dismissAlarm,
   soundLabel,
-  SOUND_OPTIONS,
 } from '@/native/alarm';
 import { rescheduleAll, rescheduleDebounced } from '@/native/rescheduler';
+import { SoundPicker } from '@/ui/components/sound-picker';
 import { AppText } from '@/ui/components/text';
 import { haptics, hapticsEnabled, setHapticsEnabled } from '@/ui/components/haptics';
 import { useTheme } from '@/ui/theme';
@@ -65,6 +65,7 @@ export default function More() {
   const [pickingMorning, setPickingMorning] = useState(false);
   const [pickingQuietDate, setPickingQuietDate] = useState(false);
   const [chooser, setChooser] = useState<Chooser | null>(null);
+  const [pickingSound, setPickingSound] = useState(false);
   const [hapticsOn, setHapticsOn] = useState(hapticsEnabled());
   const [localS, setLocalS] = useState<LocalSettings>(localSettingsCache());
   useEffect(() => {
@@ -149,11 +150,23 @@ export default function More() {
       onPick: (v) => updateSettings.mutate({ maxSnoozeCount: Number(v) }),
     });
 
-  const chooseSound = () =>
+  const chooseSound = () => setPickingSound(true);
+
+  const chooseVolume = () =>
     setChooser({
-      title: '기본 알람음',
-      options: SOUND_OPTIONS.map((o) => ({ label: o.label, value: o.key })),
-      onPick: (v) => updateSettings.mutate({ defaultSoundKey: String(v) }),
+      title: '알람 볼륨',
+      options: [50, 70, 85, 100].map((v) => ({ label: `${v}%`, value: v })),
+      onPick: (v) => patchLocal({ alarmVolumePercent: Number(v) }),
+    });
+
+  const choosePreAlarm = () =>
+    setChooser({
+      title: '알람 예고 (순수 알람 N분 전 약한 진동)',
+      options: [
+        { label: '끔', value: 0 },
+        ...[5, 10, 15].map((m) => ({ label: `${m}분 전`, value: m })),
+      ],
+      onPick: (v) => patchLocal({ preAlarmMinutes: Number(v) }, true),
     });
 
   /** 울리는 것 정지 + 예약된 스누즈 제거 + 재계산. 일회성 — 설정을 끄는 게 아니다 */
@@ -389,6 +402,18 @@ export default function More() {
           <AppText color="accent">{soundLabel(settings?.defaultSoundKey)}</AppText>
         </Pressable>
         <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={chooseVolume}>
+          <AppText>알람 볼륨</AppText>
+          <AppText color="accent" nums>{localS.alarmVolumePercent}%</AppText>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable style={styles.row} onPress={choosePreAlarm}>
+          <AppText>알람 예고</AppText>
+          <AppText color="accent" nums>
+            {localS.preAlarmMinutes > 0 ? `${localS.preAlarmMinutes}분 전` : '끔'}
+          </AppText>
+        </Pressable>
+        <View style={styles.divider} />
         <Pressable style={styles.row} onPress={chooseSnoozeMinutes}>
           <AppText>스누즈 간격</AppText>
           <AppText color="accent" nums>
@@ -567,6 +592,13 @@ export default function More() {
         Chrona {Constants.expoConfig?.version ?? '?'}
       </AppText>
 
+      <SoundPicker
+        visible={pickingSound}
+        title="기본 알람음"
+        value={settings?.defaultSoundKey}
+        onPick={(key) => updateSettings.mutate({ defaultSoundKey: key })}
+        onClose={() => setPickingSound(false)}
+      />
       {/* 선택지 3개를 넘는 설정이 많아 Alert 대신 공용 시트를 쓴다 (안드로이드 Alert는 버튼 3개 한계) */}
       <Modal visible={!!chooser} transparent animationType="fade" onRequestClose={() => setChooser(null)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setChooser(null)}>

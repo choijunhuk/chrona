@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 다크: bg=#17191F text=#EDEFF5 sub=#9BA1B0 accent=#6C7BFF -->
+<resources>
+    <color name="chrona_widget_bg">#17191F</color>
+    <color name="chrona_widget_text">#EDEFF5</color>
+    <color name="chrona_widget_sub">#9BA1B0</color>
+    <color name="chrona_widget_accent">#6C7BFF</color>
+</resources>

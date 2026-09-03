@@ -28,21 +28,30 @@ import {
 } from '@/domain/alarm-payload';
 
 // ─── 알람 사운드 재생 (FGS 보강) ─────────────────────────
-// 채널 사운드가 간헐적으로 무음(One UI)이라 서비스에서 직접 루프 재생한다.
-// expo-audio는 JS 컨텍스트에서 동작 — FGS가 프로세스를 살려두는 동안 유효.
+// 채널 사운드는 USAGE_NOTIFICATION이라 진동/무음 모드에서 통째로 묵음이 된다.
+// 실제 소리는 네이티브 모듈이 USAGE_ALARM + STREAM_ALARM 으로 재생한다 (§3.10).
 
-import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
+import {
+  isSystemSoundUri,
+  listSystemAlarmSounds,
+  playSound,
+  previewSound as previewSoundNative,
+  stopSound,
+} from '@/native/alarm-sound';
 
 export const CHANNELS = {
   alarm: 'chrona.alarm',
   reminder: 'chrona.reminder',
   ongoing: 'chrona.ongoing',
   timer: 'chrona.timer',
+  prealarm: 'chrona.prealarm',
 } as const;
 
 const ONGOING_NOTIFICATION_ID = 'chrona-ongoing';
 const ANCHOR_KIND = 'midnight-anchor';
 const VIBRATION_PATTERN = [300, 500];
+// 예고 알림용 약한 진동. notifee는 0 이하 값을 거부해 [0,250,...] 대신 앞을 200으로 둔다
+const PRE_ALARM_VIBRATION_PATTERN = [200, 250, 200, 250, 200, 250];
 
 // ─── 알람음 (마스터 §3.10: 4종 + 무음) ───────────────────
 
@@ -56,22 +65,51 @@ export const SOUND_OPTIONS: { key: string; label: string }[] = [
   { key: 'none', label: '무음(진동)' },
 ];
 
+/** 기기 벨소리를 합친 전체 목록 캐시 (getSoundOptions가 채운다) */
+let soundOptionsCache: { key: string; label: string }[] | null = null;
+
+/**
+ * 선택지 = 번들 5종 + 무음 + 기기 알람 벨소리(key=uri).
+ * 첫 호출에서 네이티브 조회 후 캐시 — 피커가 매번 조회하지 않게.
+ */
+export async function getSoundOptions(): Promise<{ key: string; label: string }[]> {
+  if (soundOptionsCache) return soundOptionsCache;
+  const system = await listSystemAlarmSounds();
+  soundOptionsCache = [
+    ...SOUND_OPTIONS,
+    ...system.map((s) => ({ key: s.uri, label: s.title })),
+  ];
+  return soundOptionsCache;
+}
+
 export function soundLabel(key: string | undefined): string {
+  if (isSystemSoundUri(key)) {
+    return soundOptionsCache?.find((o) => o.key === key)?.label ?? '시스템 벨소리';
+  }
   return SOUND_OPTIONS.find((o) => o.key === key)?.label ?? '기본';
 }
 
-/** soundKey → 번들 리소스. require는 정적이어야 하므로 맵으로 고정 */
-const SOUND_SOURCES: Record<string, number> = {
-  default: require('../../assets/sounds/alarm_default.wav'),
-  alarm_01: require('../../assets/sounds/alarm_01.wav'),
-  alarm_02: require('../../assets/sounds/alarm_02.wav'),
-  alarm_03: require('../../assets/sounds/alarm_03.wav'),
-  alarm_04: require('../../assets/sounds/alarm_04.wav'),
-};
+/** 피커 미리듣기 (3초). 'none'은 재생할 것이 없다 */
+export async function previewSound(key: string): Promise<void> {
+  if (key === 'none') return;
+  await previewSoundNative(isSystemSoundUri(key) ? key : soundResource(key));
+}
 
-/** soundKey → 채널 id. 채널마다 sound가 고정이라 소리 종류만큼 채널이 필요하다 */
+export async function stopPreview(): Promise<void> {
+  await stopSound();
+}
+
+/** 번들 알람음 키 — res/raw 리소스 이름과 1:1 (알림 채널 sound 값과 동일) */
+const BUNDLED_SOUND_KEYS = new Set(['default', 'alarm_01', 'alarm_02', 'alarm_03', 'alarm_04']);
+
+/**
+ * soundKey → 채널 id. 채널마다 sound가 고정이라 소리 종류만큼 채널이 필요하다.
+ * 시스템 벨소리(content://·file://)는 채널을 만들 수 없으므로 기본 알람 채널을 쓰고
+ * 실제 소리는 네이티브 재생이 담당한다 (채널 사운드는 기본음 폴백).
+ */
 function alarmChannelFor(soundKey: string | undefined): string {
-  const key = soundKey && (soundKey in SOUND_SOURCES || soundKey === 'none') ? soundKey : 'default';
+  const key =
+    soundKey && (BUNDLED_SOUND_KEYS.has(soundKey) || soundKey === 'none') ? soundKey : 'default';
   return key === 'default' ? CHANNELS.alarm : `chrona.alarm.${key}`;
 }
 
@@ -105,6 +143,14 @@ export async function ensureChannels(): Promise<void> {
     id: CHANNELS.timer,
     name: '타이머',
     importance: AndroidImportance.LOW,
+  });
+  // 알람 예고(stage-14): 소리 없이 약한 진동만 — 깨우지 않고 "곧 울린다"만 알린다
+  await notifee.createChannel({
+    id: CHANNELS.prealarm,
+    name: '알람 예고',
+    importance: AndroidImportance.LOW,
+    vibration: true,
+    vibrationPattern: PRE_ALARM_VIBRATION_PATTERN,
   });
   // 알람음별 채널 — 채널 sound는 생성 후 변경 불가라 소리 종류마다 채널을 나눈다 (§3.10)
   for (const opt of SOUND_OPTIONS) {
@@ -184,9 +230,45 @@ function alarmActions(payload: AlarmPayload, opts?: { snooze?: boolean }) {
   return actions;
 }
 
-/** soundKey → res/raw 리소스 이름 (확장자 없음). 미등록 키는 기본음 */
+/** soundKey → res/raw 리소스 이름 (확장자 없음). 시스템 벨소리·미등록 키는 기본음 */
 function soundResource(soundKey: string | undefined): string {
-  return soundKey && soundKey !== 'default' && soundKey in SOUND_SOURCES ? soundKey : 'default';
+  return soundKey && soundKey !== 'default' && BUNDLED_SOUND_KEYS.has(soundKey)
+    ? soundKey
+    : 'default';
+}
+
+const PRE_ALARM_PREFIX = 'prealarm:';
+const PRE_ALARM_KIND = 'pre-alarm';
+
+/**
+ * 알람 예고(stage-14): 순수 알람 N분 전 조용한 알림 1건.
+ * 재계산 때 일반 트리거와 함께 취소·재생성된다 (cancelAllTriggers가 접두어를 특별 취급하지 않음).
+ */
+export async function schedulePreAlarm(
+  payload: AlarmPayload,
+  fireAt: Date,
+  minutesBefore: number
+): Promise<string> {
+  return notifee.createTriggerNotification(
+    {
+      id: `${PRE_ALARM_PREFIX}${payload.eventId}|${payload.occurrenceStart}`,
+      title: `곧 알람 · ${payload.timeLabel}`,
+      body: `${minutesBefore}분 후 ${payload.title}`,
+      data: { ...serializeAlarmPayload(payload), chronaKind: PRE_ALARM_KIND },
+      android: {
+        channelId: CHANNELS.prealarm,
+        importance: AndroidImportance.LOW,
+        autoCancel: true,
+        pressAction: { id: 'default', launchActivity: 'default' },
+        vibrationPattern: PRE_ALARM_VIBRATION_PATTERN,
+      },
+    },
+    {
+      type: TriggerType.TIMESTAMP,
+      timestamp: fireAt.getTime(),
+      alarmManager: { type: AlarmType.SET_ALARM_CLOCK },
+    }
+  );
 }
 
 /** 리마인더(①): 한 번 띄우고 끝 */
@@ -764,58 +846,24 @@ function alarmSettingLabel(setting: number): string {
   }
 }
 
-let alarmPlayer: AudioPlayer | null = null;
-let volumeRamp: ReturnType<typeof setInterval> | null = null;
-
-// 점진 볼륨 (stage-11): 0.15 → 1.0 을 30초에 걸쳐. 기상 알람 체감 개선
-const RAMP_START = 0.15;
+// 점진 볼륨 (stage-11): 0 → 목표 볼륨을 30초에 걸쳐. 램프는 네이티브가 수행한다
 const RAMP_SECONDS = 30;
 
+/**
+ * 알람음 시작 — USAGE_ALARM 네이티브 재생 (§3.10).
+ * 무음/진동 모드에서도 울려야 하므로 JS 오디오(USAGE_MEDIA)를 쓰지 않는다.
+ */
 export async function startAlarmSound(soundKey = 'default'): Promise<void> {
-  try {
-    if (alarmPlayer) return;
-    if (soundKey === 'none') return; // 무음(진동만) — 채널 vibrationPattern이 담당
-    const { getLocalSettings } = await import('@/data/local-settings');
-    const gradual = (await getLocalSettings()).gradualVolume;
-    await setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true });
-
-    alarmPlayer = createAudioPlayer(SOUND_SOURCES[soundKey] ?? SOUND_SOURCES.default);
-    alarmPlayer.loop = true;
-    alarmPlayer.volume = gradual ? RAMP_START : 1;
-    alarmPlayer.play();
-
-    if (gradual) {
-      let elapsed = 0;
-      volumeRamp = setInterval(() => {
-        elapsed += 1;
-        if (!alarmPlayer || elapsed >= RAMP_SECONDS) {
-          if (alarmPlayer) alarmPlayer.volume = 1;
-          stopVolumeRamp();
-          return;
-        }
-        alarmPlayer.volume = RAMP_START + (1 - RAMP_START) * (elapsed / RAMP_SECONDS);
-      }, 1000);
-    }
-  } catch (e) {
-    console.warn('[chrona] alarm sound start failed:', e);
-  }
-}
-
-function stopVolumeRamp(): void {
-  if (volumeRamp) {
-    clearInterval(volumeRamp);
-    volumeRamp = null;
-  }
+  if (soundKey === 'none') return; // 무음(진동만) — 채널 vibrationPattern이 담당
+  const { getLocalSettings } = await import('@/data/local-settings');
+  const local = await getLocalSettings();
+  await playSound(isSystemSoundUri(soundKey) ? soundKey : soundResource(soundKey), {
+    loop: true,
+    rampSeconds: local.gradualVolume ? RAMP_SECONDS : 0,
+    volumePercent: local.alarmVolumePercent,
+  });
 }
 
 export async function stopAlarmSound(): Promise<void> {
-  stopVolumeRamp();
-  try {
-    if (!alarmPlayer) return;
-    alarmPlayer.pause();
-    alarmPlayer.release();
-    alarmPlayer = null;
-  } catch {
-    alarmPlayer = null;
-  }
+  await stopSound();
 }

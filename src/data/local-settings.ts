@@ -18,6 +18,10 @@ export type LocalSettings = {
   skippedAlarmKeys: string[];
   /** 알람 자동 종료(분). 울린 채 방치 시 이 시간 뒤 자동 해제 + 놓친 알람 알림 */
   alarmTimeoutMinutes: number;
+  /** 알람 볼륨(%). 네이티브 재생 시 STREAM_ALARM 최대 × 이 비율. 무음 모드와 무관 (USAGE_ALARM) */
+  alarmVolumePercent: number;
+  /** 순수 알람 N분 전 '곧 알람' 예고 (저중요도 알림 + 약한 진동). 0 = 끔 */
+  preAlarmMinutes: number;
 };
 
 export const LOCAL_DEFAULTS: LocalSettings = {
@@ -28,6 +32,8 @@ export const LOCAL_DEFAULTS: LocalSettings = {
   quietUntil: null,
   skippedAlarmKeys: [],
   alarmTimeoutMinutes: 10,
+  alarmVolumePercent: 100,
+  preAlarmMinutes: 0,
 };
 
 let cache: LocalSettings | null = null;

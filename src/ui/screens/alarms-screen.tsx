@@ -11,9 +11,11 @@ import {
   useToggleAlarm,
 } from '@/data/hooks/alarms';
 import { expandStandaloneAlarms } from '@/domain/schedule';
+import { soundLabel } from '@/native/alarm';
 import type { StandaloneAlarm } from '@/domain/types';
 import { Button } from '@/ui/components/button';
 import { haptics } from '@/ui/components/haptics';
+import { SoundPicker } from '@/ui/components/sound-picker';
 import { AppText } from '@/ui/components/text';
 import { useTheme } from '@/ui/theme';
 import { radius, spacing, type ThemeColors } from '@/ui/tokens';
@@ -137,6 +139,8 @@ function AlarmForm({ onDone }: { onDone: () => void }) {
   const [time, setTime] = useState('07:00');
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [label, setLabel] = useState('');
+  const [soundKey, setSoundKey] = useState('default');
+  const [pickingSound, setPickingSound] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
 
   const onPick = (e: DateTimePickerEvent, d?: Date) => {
@@ -155,7 +159,7 @@ function AlarmForm({ onDone }: { onDone: () => void }) {
         weekdays,
         label: label.trim() || null,
         enabled: true,
-        soundKey: 'default',
+        soundKey,
         vibrate: true,
       });
       haptics.success();
@@ -197,6 +201,16 @@ function AlarmForm({ onDone }: { onDone: () => void }) {
         placeholder="라벨 (선택)"
         placeholderTextColor={colors.textDim}
       />
+      <Pressable style={styles.soundRow} onPress={() => setPickingSound(true)}>
+        <AppText color="textSub">알람음</AppText>
+        <AppText color="accent">{soundLabel(soundKey)}</AppText>
+      </Pressable>
+      <SoundPicker
+        visible={pickingSound}
+        value={soundKey}
+        onPick={setSoundKey}
+        onClose={() => setPickingSound(false)}
+      />
       <View style={styles.formActions}>
         <Button label="취소" variant="ghost" onPress={onDone} style={styles.formBtn} />
         <Button label="추가" onPress={save} loading={createAlarm.isPending} style={styles.formBtn} />
@@ -229,6 +243,7 @@ const createStyles = (colors: ThemeColors) =>
     cardBody: { flex: 1, gap: 2 },
     time: { fontSize: 28, fontWeight: '600', fontFamily: 'Pretendard' },
     delete: { paddingLeft: spacing.sm },
+    soundRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.xs },
     form: {
       backgroundColor: colors.surface,
       borderRadius: radius.md,

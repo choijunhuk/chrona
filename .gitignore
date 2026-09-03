@@ -46,7 +46,7 @@ example
 .omc/
 
 # native prebuild output (CNG)
-android/
+# (native/android/ 는 추적 대상 — 루트 android/ 만 무시: 43행 /android)
 ios/
 
 # env
