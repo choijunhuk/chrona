@@ -17,6 +17,7 @@ const PAYLOAD: AlarmPayload = {
   maxSnooze: 3,
   currentSnoozeCount: 1,
   soundKey: 'alarm_02',
+  challenge: 'none',
 };
 
 describe('serializeAlarmPayload / parseAlarmPayload', () => {
